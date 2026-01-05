@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  developer
+  oem
+  admin
+}
+
+enum MembershipRole {
+  owner
+  member
+}
+
+enum BackendStatus {
+  active
+  dev
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime @default(now())
+  developerOrg DeveloperOrg? @relation(fields: [developerOrgId], references: [id])
+  developerOrgId String?
+  oemOrg       OemOrg? @relation(fields: [oemOrgId], references: [id])
+  oemOrgId     String?
+  memberships  Membership[]
+}
+
+model DeveloperOrg {
+  id          String    @id @default(cuid())
+  name        String
+  ownerUserId String
+  ownerUser   User      @relation(fields: [ownerUserId], references: [id])
+  memberships Membership[]
+  projects    Project[]
+  createdAt   DateTime  @default(now())
+}
+
+model Membership {
+  id      String @id @default(cuid())
+  userId  String
+  orgId   String
+  role    MembershipRole
+  user    User @relation(fields: [userId], references: [id])
+  org     DeveloperOrg @relation(fields: [orgId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  packageName String
+  createdAt   DateTime @default(now())
+  org         DeveloperOrg @relation(fields: [orgId], references: [id])
+  apiKeys     ProjectApiKey[]
+}
+
+model ProjectApiKey {
+  id        String   @id @default(cuid())
+  projectId String
+  keyPrefix String
+  keyHash   String
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  project   Project @relation(fields: [projectId], references: [id])
+}
+
+model OemOrg {
+  id          String   @id @default(cuid())
+  name        String
+  ownerUserId String
+  ownerUser   User      @relation(fields: [ownerUserId], references: [id])
+  trustRoots  DeviceTrustRoot[]
+  createdAt   DateTime @default(now())
+}
+
+model DeviceTrustRoot {
+  id           String   @id @default(cuid())
+  oemOrgId     String
+  backendId    String
+  name         String
+  publicKeyPem String?
+  jwksUrl      String?
+  createdAt    DateTime @default(now())
+  oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
+}
+
+model FederationBackend {
+  id         String   @id @default(cuid())
+  backendId  String   @unique
+  name       String
+  region     String
+  publicKeys Json
+  trustLevel Int
+  status     BackendStatus
+  createdAt  DateTime @default(now())
+}

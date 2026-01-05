@@ -1,0 +1,36 @@
+backendId: "eu.unifiedattest.backend"
+region: "eu-west"
+challenge:
+  ttlSeconds: 120
+signingKeys:
+  activeKid: "k1"
+  keys:
+    - kid: "k1"
+      alg: "EdDSA"
+      privateKey: "MC4CAQAwBQYDK2VwBCIEIHZpmqe4EtA0jQE3mUYxPRRJRGgBTQhji+GkGU/Mymob"
+      publicKey: "MCowBQYDK2VwAyEAwDqa+NOeBFlf79vbtbzh7N+58zMqC/4/TZKtNKZ9y3o="
+federation:
+  backends:
+    - backendId: "de.oem.backend"
+      name: "Germany OEM Backend"
+      region: "eu-central"
+      trustLevel: 90
+      status: "active"
+      publicKeys:
+        - kid: "de1"
+          alg: "EdDSA"
+          publicKey: "MCowBQYDK2VwAyEAwDqa+NOeBFlf79vbtbzh7N+58zMqC/4/TZKtNKZ9y3o="
+    - backendId: "dev.local.backend"
+      name: "Dev Backend"
+      region: "local"
+      trustLevel: 10
+      status: "dev"
+      publicKeys:
+        - kid: "dev1"
+          alg: "EdDSA"
+          publicKey: "MCowBQYDK2VwAyEAwDqa+NOeBFlf79vbtbzh7N+58zMqC/4/TZKtNKZ9y3o="
+security:
+  apiKeyHeader: "x-ua-api-key"
+  jwt:
+    accessTtlMinutes: 15
+    refreshTtlDays: 30
