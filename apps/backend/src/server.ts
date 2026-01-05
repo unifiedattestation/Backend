@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import crypto from "crypto";
+import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { loadConfig } from "./lib/config";
@@ -43,6 +44,11 @@ export function buildServer() {
   app.decorate("replayCache", new ReplayCache(config.challenge.ttlSeconds));
   app.decorate("authRateLimiter", new RateLimiter(20, 60));
   app.decorate("verifyRateLimiter", new RateLimiter(60, 60));
+
+  app.register(cors, {
+    origin: true,
+    credentials: true
+  });
 
   app.register(swagger, {
     openapi: {

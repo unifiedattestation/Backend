@@ -1,7 +1,10 @@
 {
   "name": "unified-attestation",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -11,5 +14,8 @@
     "build": "npm run -w @ua/common build && npm run -w @ua/backend build && npm run -w @ua/portal build",
     "lint": "npm run -w @ua/backend lint && npm run -w @ua/portal lint",
     "test": "npm run -w @ua/backend test"
+  },
+  "dependencies": {
+    "esbuild": "^0.27.2"
   }
 }

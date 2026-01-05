@@ -29,18 +29,21 @@ model User {
   passwordHash String
   role         UserRole
   createdAt    DateTime @default(now())
-  developerOrg DeveloperOrg? @relation(fields: [developerOrgId], references: [id])
+  developerOrg DeveloperOrg? @relation("UserDeveloperOrg", fields: [developerOrgId], references: [id])
   developerOrgId String?
-  oemOrg       OemOrg? @relation(fields: [oemOrgId], references: [id])
+  oemOrg       OemOrg? @relation("UserOemOrg", fields: [oemOrgId], references: [id])
   oemOrgId     String?
   memberships  Membership[]
+  ownedDeveloperOrgs DeveloperOrg[] @relation("DeveloperOrgOwner")
+  ownedOemOrgs OemOrg[] @relation("OemOrgOwner")
 }
 
 model DeveloperOrg {
   id          String    @id @default(cuid())
   name        String
   ownerUserId String
-  ownerUser   User      @relation(fields: [ownerUserId], references: [id])
+  ownerUser   User      @relation("DeveloperOrgOwner", fields: [ownerUserId], references: [id])
+  users       User[]    @relation("UserDeveloperOrg")
   memberships Membership[]
   projects    Project[]
   createdAt   DateTime  @default(now())
@@ -80,7 +83,8 @@ model OemOrg {
   id          String   @id @default(cuid())
   name        String
   ownerUserId String
-  ownerUser   User      @relation(fields: [ownerUserId], references: [id])
+  ownerUser   User      @relation("OemOrgOwner", fields: [ownerUserId], references: [id])
+  users       User[]    @relation("UserOemOrg")
   trustRoots  DeviceTrustRoot[]
   createdAt   DateTime @default(now())
 }

@@ -38,10 +38,19 @@ export type Config = {
   };
 };
 
-const DEFAULT_CONFIG_PATH = path.resolve(process.cwd(), "config.yaml");
+const DEFAULT_CONFIG_PATHS = [
+  path.resolve(process.cwd(), "config.yaml"),
+  path.resolve(process.cwd(), "apps", "backend", "config.yaml")
+];
 
 export function loadConfig(): Config {
-  const configPath = process.env.UA_CONFIG_PATH || DEFAULT_CONFIG_PATH;
+  const explicitPath = process.env.UA_CONFIG_PATH;
+  const configPath =
+    explicitPath ||
+    DEFAULT_CONFIG_PATHS.find((candidate) => fs.existsSync(candidate));
+  if (!configPath) {
+    throw new Error("config.yaml not found. Set UA_CONFIG_PATH.");
+  }
   const file = fs.readFileSync(configPath, "utf8");
   const loaded = yaml.load(file) as Config;
 
