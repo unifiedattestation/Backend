@@ -8,16 +8,7 @@ type DeviceFamily = {
   name: string;
   codename?: string | null;
   model?: string | null;
-  manufacturer?: string | null;
-  brand?: string | null;
-  trustAnchorIds: string[];
-  createdAt: string;
-};
-
-type TrustAnchor = {
-  id: string;
-  name: string;
-  pem: string;
+  enabled: boolean;
   createdAt: string;
 };
 
@@ -45,34 +36,46 @@ type DeviceReport = {
   buildPolicyName?: string | null;
 };
 
+type AttestationServer = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  roots: { id: string; subject: string; serialHex: string }[];
+};
+
+type DeviceEntry = {
+  id: string;
+  rsaSerialHex: string;
+  ecdsaSerialHex: string;
+  revokedAt?: string | null;
+  deviceId?: string | null;
+  authorityName: string;
+  root: { subject: string; serialHex: string };
+  deviceCodename?: string | null;
+  createdAt: string;
+};
+
 export default function OemPage() {
   const [families, setFamilies] = useState<DeviceFamily[]>([]);
   const [selectedFamily, setSelectedFamily] = useState<DeviceFamily | null>(null);
-  const [activeTab, setActiveTab] = useState<"builds" | "anchors" | "reports">("builds");
+  const [activeTab, setActiveTab] = useState<"device" | "builds" | "anchors" | "reports">("device");
   const [displayName, setDisplayName] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [brand, setBrand] = useState("");
   const [federationBackends, setFederationBackends] = useState<
     { id: string; backendId: string; name: string; status: string }[]
   >([]);
 
   const [familyForm, setFamilyForm] = useState({
-    name: "",
     codename: "",
-    model: "",
-    manufacturer: "",
-    brand: ""
+    model: ""
   });
 
   const [familyEdit, setFamilyEdit] = useState({
-    name: "",
-    codename: "",
-    model: "",
-    manufacturer: "",
-    brand: ""
+    enabled: true
   });
+  const [deviceCreateError, setDeviceCreateError] = useState<string | null>(null);
 
-  const [trustAnchors, setTrustAnchors] = useState<TrustAnchor[]>([]);
-  const [anchorName, setAnchorName] = useState("");
-  const [anchorPem, setAnchorPem] = useState("");
 
   const [builds, setBuilds] = useState<BuildPolicy[]>([]);
   const [buildForm, setBuildForm] = useState({
@@ -90,6 +93,16 @@ export default function OemPage() {
   });
 
   const [reports, setReports] = useState<DeviceReport[]>([]);
+  const [attestationServers, setAttestationServers] = useState<AttestationServer[]>([]);
+  const [deviceEntries, setDeviceEntries] = useState<DeviceEntry[]>([]);
+  const [deviceForm, setDeviceForm] = useState({
+    rootId: "",
+    rsaSerialHex: "",
+    ecdsaSerialHex: "",
+    deviceId: ""
+  });
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
 
   const access = typeof window !== "undefined" ? localStorage.getItem("ua_access") : null;
 
@@ -100,16 +113,6 @@ export default function OemPage() {
     });
     if (res.ok) {
       setFamilies(await res.json());
-    }
-  };
-
-  const loadTrustAnchors = async () => {
-    if (!access) return;
-    const res = await fetch(`${backendUrl}/api/v1/oem/trust-anchors`, {
-      headers: { Authorization: `Bearer ${access}` }
-    });
-    if (res.ok) {
-      setTrustAnchors(await res.json());
     }
   };
 
@@ -144,6 +147,8 @@ export default function OemPage() {
     if (res.ok) {
       const data = await res.json();
       setDisplayName(data.displayName || "");
+      setManufacturer(data.manufacturer || "");
+      setBrand(data.brand || "");
     }
   };
 
@@ -154,15 +159,39 @@ export default function OemPage() {
     }
   };
 
+  const loadAttestationServers = async () => {
+    if (!access) return;
+    const res = await fetch(`${backendUrl}/api/v1/oem/attestation-servers`, {
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      setAttestationServers(await res.json());
+    }
+  };
+
+  const loadAnchors = async (deviceFamilyId?: string) => {
+    if (!access) return;
+    const url = deviceFamilyId
+      ? `${backendUrl}/api/v1/oem/anchors?deviceFamilyId=${deviceFamilyId}`
+      : `${backendUrl}/api/v1/oem/anchors`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      setDeviceEntries(await res.json());
+    }
+  };
+
   useEffect(() => {
     loadFamilies();
-    loadTrustAnchors();
     loadProfile();
     loadFederation();
+    loadAttestationServers();
   }, [access]);
 
   const createFamily = async () => {
     if (!access) return;
+    setDeviceCreateError(null);
     const res = await fetch(`${backendUrl}/api/v1/oem/device-families`, {
       method: "POST",
       headers: {
@@ -170,17 +199,17 @@ export default function OemPage() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        name: familyForm.name,
         codename: familyForm.codename || undefined,
-        model: familyForm.model || undefined,
-        manufacturer: familyForm.manufacturer || undefined,
-        brand: familyForm.brand || undefined
+        model: familyForm.model || undefined
       })
     });
-    if (res.ok) {
-      setFamilyForm({ name: "", codename: "", model: "", manufacturer: "", brand: "" });
-      loadFamilies();
+    if (!res.ok) {
+      const raw = await res.text();
+      setDeviceCreateError(raw || "Failed to register device");
+      return;
     }
+    setFamilyForm({ codename: "", model: "" });
+    loadFamilies();
   };
 
   const updateFamily = async () => {
@@ -192,12 +221,7 @@ export default function OemPage() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        name: familyEdit.name,
-        codename: familyEdit.codename || undefined,
-        model: familyEdit.model || undefined,
-        manufacturer: familyEdit.manufacturer || undefined,
-        brand: familyEdit.brand || undefined,
-        trustAnchorIds: selectedFamily.trustAnchorIds
+        enabled: familyEdit.enabled
       })
     });
     if (res.ok) {
@@ -205,53 +229,6 @@ export default function OemPage() {
       setSelectedFamily(updated);
       loadFamilies();
     }
-  };
-
-  const attachAnchor = async (anchorId: string, next: boolean) => {
-    if (!access || !selectedFamily) return;
-    const nextIds = next
-      ? Array.from(new Set([...selectedFamily.trustAnchorIds, anchorId]))
-      : selectedFamily.trustAnchorIds.filter((id) => id !== anchorId);
-    const res = await fetch(`${backendUrl}/api/v1/oem/device-families/${selectedFamily.id}`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${access}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ trustAnchorIds: nextIds })
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setSelectedFamily(updated);
-      loadFamilies();
-    }
-  };
-
-  const createAnchor = async () => {
-    if (!access) return;
-    const res = await fetch(`${backendUrl}/api/v1/oem/trust-anchors`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${access}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ name: anchorName, pem: anchorPem })
-    });
-    if (res.ok) {
-      setAnchorName("");
-      setAnchorPem("");
-      loadTrustAnchors();
-    }
-  };
-
-  const deleteAnchor = async (anchorId: string) => {
-    if (!access) return;
-    await fetch(`${backendUrl}/api/v1/oem/trust-anchors/${anchorId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${access}` }
-    });
-    loadTrustAnchors();
-    loadFamilies();
   };
 
   const saveBuild = async () => {
@@ -349,20 +326,113 @@ export default function OemPage() {
         Authorization: `Bearer ${access}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ displayName })
+      body: JSON.stringify({ displayName, manufacturer, brand })
     });
+  };
+
+  const createAnchor = async () => {
+    if (!access) {
+      setDeviceError("Not authenticated.");
+      return null;
+    }
+    if (!selectedFamily) {
+      setDeviceError("Select a device first.");
+      return null;
+    }
+    if (!deviceForm.rootId || !deviceForm.rsaSerialHex || !deviceForm.ecdsaSerialHex) {
+      setDeviceError("Select a root and enter RSA + ECDSA serials.");
+      return null;
+    }
+    setDeviceError(null);
+    setDeviceNotice(null);
+    const res = await fetch(`${backendUrl}/api/v1/oem/anchors`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        deviceFamilyId: selectedFamily.id,
+        authorityRootId: deviceForm.rootId,
+        rsaSerialHex: deviceForm.rsaSerialHex,
+        ecdsaSerialHex: deviceForm.ecdsaSerialHex,
+        deviceId: deviceForm.deviceId || undefined
+      })
+    });
+    if (!res.ok) {
+      const raw = await res.text();
+      setDeviceError(raw || "Failed to register device");
+      return null;
+    }
+    const created = await res.json();
+    setDeviceForm({ rootId: "", rsaSerialHex: "", ecdsaSerialHex: "", deviceId: "" });
+    loadAnchors(selectedFamily.id);
+    return created as { id: string };
+  };
+
+  const revokeAnchor = async (id: string) => {
+    if (!access) {
+      setDeviceError("Not authenticated.");
+      return;
+    }
+    if (!selectedFamily) return;
+    setDeviceError(null);
+    setDeviceNotice(null);
+    await fetch(`${backendUrl}/api/v1/oem/anchors/${id}/revoke`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    loadAnchors(selectedFamily.id);
+  };
+
+  const downloadKeybox = async (deviceId?: string | null) => {
+    if (!access) {
+      setDeviceError("Not authenticated.");
+      return;
+    }
+    if (!selectedFamily) {
+      setDeviceError("Select a device first.");
+      return;
+    }
+    setDeviceError(null);
+    setDeviceNotice(null);
+    const res = await fetch(`${backendUrl}/api/v1/oem/anchors/generate-keybox`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        deviceFamilyId: selectedFamily.id,
+        deviceId: deviceId || undefined
+      })
+    });
+    if (!res.ok) {
+      const raw = await res.text();
+      setDeviceError(raw || "Failed to generate keybox");
+      return;
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `keybox_${deviceId || "device"}.xml`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+    setDeviceNotice("Keybox download started.");
+    loadAnchors(selectedFamily.id);
+  };
+
+  const createAndGenerateKeybox = async () => {
+    const currentDeviceId = deviceForm.deviceId;
+    await downloadKeybox(currentDeviceId || undefined);
   };
 
   const selectFamily = (family: DeviceFamily) => {
     setSelectedFamily(family);
-    setFamilyEdit({
-      name: family.name,
-      codename: family.codename || "",
-      model: family.model || "",
-      manufacturer: family.manufacturer || "",
-      brand: family.brand || ""
-    });
-    setActiveTab("builds");
+    setFamilyEdit({ enabled: family.enabled });
+    setActiveTab("device");
+    setDeviceForm({ rootId: "", rsaSerialHex: "", ecdsaSerialHex: "", deviceId: "" });
     loadBuilds(family.id);
     loadReports(family.id);
   };
@@ -370,6 +440,7 @@ export default function OemPage() {
   useEffect(() => {
     if (selectedFamily) {
       loadReports(selectedFamily.id);
+      loadAnchors(selectedFamily.id);
     }
   }, [selectedFamily]);
 
@@ -377,7 +448,7 @@ export default function OemPage() {
     <Layout>
       <div className="grid lg:grid-cols-[2fr,1fr] gap-8">
         <section className="bg-white/70 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">Device Families</h2>
+          <h2 className="text-xl font-semibold">Devices</h2>
           <div className="mt-4 space-y-3">
             {families.map((family) => (
               <button
@@ -389,26 +460,20 @@ export default function OemPage() {
                 }`}
                 onClick={() => selectFamily(family)}
               >
-                <div className="font-medium">{family.name}</div>
-                <div className="text-xs opacity-80">Codename: {family.codename || "-"}</div>
+                <div className="font-medium">{family.codename || family.name}</div>
                 <div className="text-xs opacity-80">Model: {family.model || "-"}</div>
+                {!family.enabled && <div className="text-xs opacity-80">Status: disabled</div>}
               </button>
             ))}
           </div>
         </section>
 
         <section className="bg-white/70 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">Register Device Family</h2>
+          <h2 className="text-xl font-semibold">Register Device</h2>
           <div className="mt-4 space-y-3">
             <input
               className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              placeholder="Device family name"
-              value={familyForm.name}
-              onChange={(e) => setFamilyForm({ ...familyForm, name: e.target.value })}
-            />
-            <input
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              placeholder="Codename (optional)"
+              placeholder="Device codename"
               value={familyForm.codename}
               onChange={(e) => setFamilyForm({ ...familyForm, codename: e.target.value })}
             />
@@ -418,21 +483,10 @@ export default function OemPage() {
               value={familyForm.model}
               onChange={(e) => setFamilyForm({ ...familyForm, model: e.target.value })}
             />
-            <input
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              placeholder="Manufacturer (optional)"
-              value={familyForm.manufacturer}
-              onChange={(e) => setFamilyForm({ ...familyForm, manufacturer: e.target.value })}
-            />
-            <input
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              placeholder="Brand (optional)"
-              value={familyForm.brand}
-              onChange={(e) => setFamilyForm({ ...familyForm, brand: e.target.value })}
-            />
             <button className="w-full rounded-lg bg-moss text-white py-2" onClick={createFamily}>
               Save
             </button>
+            {deviceCreateError && <div className="text-sm text-red-600">{deviceCreateError}</div>}
           </div>
         </section>
       </div>
@@ -441,10 +495,20 @@ export default function OemPage() {
         <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold">{selectedFamily.name}</h2>
+              <h2 className="text-xl font-semibold">
+                {selectedFamily.codename || selectedFamily.name}
+              </h2>
               <p className="text-xs text-gray-500">ID: {selectedFamily.id}</p>
             </div>
             <div className="flex gap-2 text-sm">
+              <button
+                className={`rounded-full px-4 py-2 ${
+                  activeTab === "device" ? "bg-ink text-white" : "bg-white border"
+                }`}
+                onClick={() => setActiveTab("device")}
+              >
+                Device
+              </button>
               <button
                 className={`rounded-full px-4 py-2 ${
                   activeTab === "builds" ? "bg-ink text-white" : "bg-white border"
@@ -472,45 +536,31 @@ export default function OemPage() {
             </div>
           </div>
 
-          <div className="mt-6 grid md:grid-cols-[1.2fr,1fr] gap-6">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700">Family Details</h3>
-              <div className="mt-3 space-y-2">
-                <input
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="Name"
-                  value={familyEdit.name}
-                  onChange={(e) => setFamilyEdit({ ...familyEdit, name: e.target.value })}
-                />
-                <input
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="Codename"
-                  value={familyEdit.codename}
-                  onChange={(e) => setFamilyEdit({ ...familyEdit, codename: e.target.value })}
-                />
-                <input
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="Model"
-                  value={familyEdit.model}
-                  onChange={(e) => setFamilyEdit({ ...familyEdit, model: e.target.value })}
-                />
-                <input
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="Manufacturer"
-                  value={familyEdit.manufacturer}
-                  onChange={(e) => setFamilyEdit({ ...familyEdit, manufacturer: e.target.value })}
-                />
-                <input
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="Brand"
-                  value={familyEdit.brand}
-                  onChange={(e) => setFamilyEdit({ ...familyEdit, brand: e.target.value })}
-                />
-                <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={updateFamily}>
-                  Update Family
-                </button>
+          <div className="mt-6">
+            {activeTab === "device" && (
+              <div className="max-w-xl">
+                <h3 className="text-sm font-semibold text-gray-700">Device</h3>
+                <div className="mt-3 space-y-2">
+                  <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                    Codename: {selectedFamily.codename || "-"}
+                  </div>
+                  <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                    Model: {selectedFamily.model || "-"}
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={familyEdit.enabled}
+                      onChange={(e) => setFamilyEdit({ enabled: e.target.checked })}
+                    />
+                    Enabled
+                  </label>
+                  <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={updateFamily}>
+                    Save Device Status
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {activeTab === "builds" && (
               <div>
@@ -638,49 +688,93 @@ export default function OemPage() {
             {activeTab === "anchors" && (
               <div>
                 <h3 className="text-sm font-semibold text-gray-700">Trust Anchors</h3>
-                <div className="mt-3 space-y-2">
-                  {trustAnchors.map((anchor) => {
-                    const attached = selectedFamily.trustAnchorIds.includes(anchor.id);
-                    return (
-                      <label
-                        key={anchor.id}
-                        className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-2 text-sm"
+                <div className="mt-3">
+                  <h3 className="text-sm font-semibold text-gray-700">Anchors</h3>
+                  <div className="mt-3 grid lg:grid-cols-[1.2fr,1fr] gap-6">
+                    <div className="space-y-3">
+                      <select
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        value={deviceForm.rootId}
+                        onChange={(e) => setDeviceForm({ ...deviceForm, rootId: e.target.value })}
                       >
-                        <span>{anchor.name}</span>
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={attached}
-                            onChange={(e) => attachAnchor(anchor.id, e.target.checked)}
-                          />
-                          <button
-                            className="text-xs text-red-600"
-                            onClick={() => deleteAnchor(anchor.id)}
-                          >
-                            Delete
-                          </button>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  <input
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                    placeholder="Anchor name"
-                    value={anchorName}
-                    onChange={(e) => setAnchorName(e.target.value)}
-                  />
-                  <textarea
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                    placeholder="Root/intermediate PEM"
-                    value={anchorPem}
-                    onChange={(e) => setAnchorPem(e.target.value)}
-                  />
-                  <button className="rounded-lg bg-clay text-white px-4 py-2" onClick={createAnchor}>
-                    Upload Anchor
-                  </button>
+                        <option value="">Select attestation root</option>
+                        {attestationServers.flatMap((server) =>
+                          server.roots.map((root) => (
+                            <option key={root.id} value={root.id}>
+                              {server.name} — {root.subject} (serial: {root.serialHex})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <input
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="RSA attestation serial hex"
+                        value={deviceForm.rsaSerialHex}
+                        onChange={(e) =>
+                          setDeviceForm({ ...deviceForm, rsaSerialHex: e.target.value })
+                        }
+                      />
+                      <input
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="ECDSA attestation serial hex"
+                        value={deviceForm.ecdsaSerialHex}
+                        onChange={(e) =>
+                          setDeviceForm({ ...deviceForm, ecdsaSerialHex: e.target.value })
+                        }
+                      />
+                      <input
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="Device ID for keybox (optional)"
+                        value={deviceForm.deviceId}
+                        onChange={(e) => setDeviceForm({ ...deviceForm, deviceId: e.target.value })}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="rounded-lg bg-ink text-white px-4 py-2"
+                          onClick={createAnchor}
+                        >
+                          Register Anchor
+                        </button>
+                        <button
+                          className="rounded-lg bg-moss text-white px-4 py-2"
+                          onClick={createAndGenerateKeybox}
+                        >
+                          Generate Keys
+                        </button>
+                      </div>
+                      {deviceError && <div className="text-sm text-red-600">{deviceError}</div>}
+                      {deviceNotice && <div className="text-sm text-green-700">{deviceNotice}</div>}
+                    </div>
+                    <div className="space-y-3">
+                      {deviceEntries.map((device) => (
+                        <div key={device.id} className="rounded-xl border border-gray-200 p-4">
+                          <div className="text-sm font-semibold">
+                            RSA: {device.rsaSerialHex}
+                          </div>
+                          <div className="text-sm font-semibold">
+                            ECDSA: {device.ecdsaSerialHex}
+                          </div>
+                          {device.revokedAt && (
+                            <div className="text-xs text-red-600">Revoked: {device.revokedAt}</div>
+                          )}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              className="rounded-md bg-rose-500 text-white px-3 py-1 text-xs"
+                              onClick={() => revokeAnchor(device.id)}
+                              disabled={Boolean(device.revokedAt)}
+                            >
+                              {device.revokedAt ? "Revoked" : "Revoke"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {deviceEntries.length === 0 && (
+                        <div className="text-sm text-gray-500">No anchors registered yet.</div>
+                      )}
+                      {deviceError && <div className="text-sm text-red-600">{deviceError}</div>}
+                      {deviceNotice && <div className="text-sm text-green-700">{deviceNotice}</div>}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -710,12 +804,24 @@ export default function OemPage() {
 
       <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
         <h2 className="text-xl font-semibold">Profile</h2>
-        <div className="mt-4 flex flex-col md:flex-row gap-3">
+        <div className="mt-4 grid md:grid-cols-3 gap-3">
           <input
-            className="flex-1 rounded-lg border border-gray-300 px-3 py-2"
+            className="rounded-lg border border-gray-300 px-3 py-2"
             placeholder="Display name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
+          />
+          <input
+            className="rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="Manufacturer"
+            value={manufacturer}
+            onChange={(e) => setManufacturer(e.target.value)}
+          />
+          <input
+            className="rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="Brand"
+            value={brand}
+            onChange={(e) => setBrand(e.target.value)}
           />
           <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={saveProfile}>
             Save

@@ -1,7 +1,9 @@
+import crypto from "crypto";
 import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
 import { errorResponse } from "../lib/errors";
+import { generateKeyboxXml } from "../services/keybox";
 
 async function requireOemOrg(userId: string) {
   const prisma = getPrisma();
@@ -23,6 +25,22 @@ function requireOemRole(role: string, reply: any) {
     return false;
   }
   return true;
+}
+
+function describeRoot(pem: string) {
+  const cert = new crypto.X509Certificate(pem);
+  return {
+    subject: cert.subject,
+    serialHex: cert.serialNumber.toUpperCase(),
+    keyType: cert.publicKey.asymmetricKeyType || "unknown"
+  };
+}
+
+async function getLocalAuthority(prisma: ReturnType<typeof getPrisma>) {
+  return prisma.attestationAuthority.findFirst({
+    where: { isLocal: true, enabled: true },
+    include: { roots: true }
+  });
 }
 
 export default async function oemRoutes(app: FastifyInstance) {
@@ -62,17 +80,16 @@ export default async function oemRoutes(app: FastifyInstance) {
     const org = await requireOemOrg(user.sub as string);
     const prisma = getPrisma();
     const families = await prisma.deviceFamily.findMany({
-      where: { oemOrgId: org.id },
-      include: { trustAnchors: true }
+      where: { oemOrgId: org.id }
     });
     const response = families.map((family) => ({
       id: family.id,
-      name: family.name,
+      name: family.codename || family.name,
       codename: family.codename,
       model: family.model,
       manufacturer: family.manufacturer,
       brand: family.brand,
-      trustAnchorIds: family.trustAnchors.map((link) => link.trustAnchorId),
+      enabled: family.enabled,
       createdAt: family.createdAt
     }));
     reply.send(response);
@@ -86,43 +103,31 @@ export default async function oemRoutes(app: FastifyInstance) {
     const org = await requireOemOrg(user.sub as string);
     const prisma = getPrisma();
     const body = request.body as {
-      name?: string;
       codename?: string;
       model?: string;
-      manufacturer?: string;
-      brand?: string;
-      trustAnchorIds?: string[];
     };
-    if (!body.name) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing device family name"));
+    if (!body.codename) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing device codename"));
+      return;
+    }
+    if (!org.manufacturer || !org.brand) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "OEM profile must include manufacturer and brand"));
       return;
     }
     const family = await prisma.deviceFamily.create({
       data: {
-        name: body.name,
+        name: body.codename,
         codename: body.codename,
         model: body.model,
-        manufacturer: body.manufacturer,
-        brand: body.brand,
-        oemOrgId: org.id,
-        trustAnchors: body.trustAnchorIds
-          ? {
-              create: body.trustAnchorIds.map((anchorId) => ({
-                trustAnchorId: anchorId
-              }))
-            }
-          : undefined
-      },
-      include: { trustAnchors: true }
+        oemOrgId: org.id
+      }
     });
     reply.send({
       id: family.id,
-      name: family.name,
+      name: family.codename || family.name,
       codename: family.codename,
       model: family.model,
-      manufacturer: family.manufacturer,
-      brand: family.brand,
-      trustAnchorIds: family.trustAnchors.map((link) => link.trustAnchorId),
+      enabled: family.enabled,
       createdAt: family.createdAt
     });
   });
@@ -136,52 +141,27 @@ export default async function oemRoutes(app: FastifyInstance) {
     const prisma = getPrisma();
     const { familyId } = request.params as { familyId: string };
     const body = request.body as {
-      name?: string;
-      codename?: string;
-      model?: string;
-      manufacturer?: string;
-      brand?: string;
-      trustAnchorIds?: string[];
+      enabled?: boolean;
     };
     const family = await prisma.deviceFamily.findFirst({
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
-    }
-    if (body.trustAnchorIds) {
-      await prisma.deviceFamilyTrustAnchor.deleteMany({
-        where: { deviceFamilyId: family.id }
-      });
-      await prisma.deviceFamily.update({
-        where: { id: family.id },
-        data: {
-          trustAnchors: {
-            create: body.trustAnchorIds.map((anchorId) => ({ trustAnchorId: anchorId }))
-          }
-        }
-      });
     }
     const updated = await prisma.deviceFamily.update({
       where: { id: family.id },
       data: {
-        name: body.name ?? family.name,
-        codename: body.codename ?? family.codename,
-        model: body.model ?? family.model,
-        manufacturer: body.manufacturer ?? family.manufacturer,
-        brand: body.brand ?? family.brand
-      },
-      include: { trustAnchors: true }
+        enabled: body.enabled ?? family.enabled
+      }
     });
     reply.send({
       id: updated.id,
-      name: updated.name,
+      name: updated.codename || updated.name,
       codename: updated.codename,
       model: updated.model,
-      manufacturer: updated.manufacturer,
-      brand: updated.brand,
-      trustAnchorIds: updated.trustAnchors.map((link) => link.trustAnchorId),
+      enabled: updated.enabled,
       createdAt: updated.createdAt
     });
   });
@@ -198,10 +178,14 @@ export default async function oemRoutes(app: FastifyInstance) {
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
-    await prisma.deviceFamilyTrustAnchor.deleteMany({ where: { deviceFamilyId: family.id } });
+    const anchors = await prisma.deviceEntry.count({ where: { deviceFamilyId: family.id } });
+    if (anchors > 0) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Device has anchors; disable instead"));
+      return;
+    }
     await prisma.buildPolicy.deleteMany({ where: { deviceFamilyId: family.id } });
     await prisma.deviceFamily.delete({ where: { id: family.id } });
     reply.send({ ok: true });
@@ -219,7 +203,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
     const builds = await prisma.buildPolicy.findMany({
@@ -241,7 +225,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
     const body = request.body as {
@@ -290,7 +274,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
     const build = await prisma.buildPolicy.findFirst({
@@ -353,53 +337,200 @@ export default async function oemRoutes(app: FastifyInstance) {
       where: { id: familyId, oemOrgId: org.id }
     });
     if (!family) {
-      reply.code(404).send(errorResponse("NOT_FOUND", "Device family not found"));
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
     await prisma.buildPolicy.delete({ where: { id: buildId } });
     reply.send({ ok: true });
   });
 
-  app.get("/trust-anchors", async (request, reply) => {
+  app.get("/attestation-servers", async (request, reply) => {
     const user = requireUser(request);
     if (!requireOemRole(user.role as string, reply)) {
       return;
     }
     const prisma = getPrisma();
-    const anchors = await prisma.trustAnchor.findMany({ orderBy: { createdAt: "desc" } });
-    reply.send(anchors);
+    const authorities = await prisma.attestationAuthority.findMany({
+      where: { enabled: true },
+      include: { roots: true },
+      orderBy: { createdAt: "desc" }
+    });
+    const response = authorities.map((authority) => ({
+      id: authority.id,
+      name: authority.name,
+      baseUrl: authority.baseUrl,
+      isLocal: authority.isLocal,
+      roots: authority.roots.map((root) => ({
+        id: root.id,
+        ...describeRoot(root.pem)
+      }))
+    }));
+    reply.send(response);
   });
 
-  app.post("/trust-anchors", async (request, reply) => {
+  app.get("/anchors", async (request, reply) => {
     const user = requireUser(request);
     if (!requireOemRole(user.role as string, reply)) {
       return;
     }
+    const org = await requireOemOrg(user.sub as string);
     const prisma = getPrisma();
-    const body = request.body as { name?: string; pem?: string };
-    if (!body.name || !body.pem) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing trust anchor name or pem"));
+    const { deviceFamilyId } = request.query as { deviceFamilyId?: string };
+    const anchors = await prisma.deviceEntry.findMany({
+      where: {
+        oemOrgId: org.id,
+        deviceFamilyId: deviceFamilyId || undefined
+      },
+      include: { authority: true, authorityRoot: true, deviceFamily: true },
+      orderBy: { createdAt: "desc" }
+    });
+    const response = anchors.map((anchor) => ({
+      id: anchor.id,
+      deviceId: anchor.deviceId,
+      rsaSerialHex: anchor.rsaSerialHex,
+      ecdsaSerialHex: anchor.ecdsaSerialHex,
+      revokedAt: anchor.revokedAt,
+      authorityId: anchor.authorityId,
+      authorityName: anchor.authority.name,
+      authorityRootId: anchor.authorityRootId,
+      root: describeRoot(anchor.authorityRoot.pem),
+      deviceFamilyId: anchor.deviceFamilyId,
+      deviceCodename: anchor.deviceFamily.codename,
+      createdAt: anchor.createdAt
+    }));
+    reply.send(response);
+  });
+
+  app.post("/anchors", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) {
       return;
     }
-    const anchor = await prisma.trustAnchor.create({
+    const org = await requireOemOrg(user.sub as string);
+    const prisma = getPrisma();
+    const body = request.body as {
+      deviceFamilyId?: string;
+      authorityRootId?: string;
+      rsaSerialHex?: string;
+      ecdsaSerialHex?: string;
+      deviceId?: string;
+    };
+    if (!body.deviceFamilyId || !body.authorityRootId || !body.rsaSerialHex || !body.ecdsaSerialHex) {
+      reply
+        .code(400)
+        .send(errorResponse("INVALID_REQUEST", "Missing deviceFamilyId, root, or serials"));
+      return;
+    }
+    const deviceFamily = await prisma.deviceFamily.findFirst({
+      where: { id: body.deviceFamilyId, oemOrgId: org.id }
+    });
+    if (!deviceFamily) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
+      return;
+    }
+    const root = await prisma.attestationRoot.findUnique({
+      where: { id: body.authorityRootId },
+      include: { authority: true }
+    });
+    if (!root || !root.authority.enabled) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Unknown attestation root"));
+      return;
+    }
+    const rsaSerial = body.rsaSerialHex.replace(/^0+/, "").toUpperCase();
+    const ecdsaSerial = body.ecdsaSerialHex.replace(/^0+/, "").toUpperCase();
+    const created = await prisma.deviceEntry.create({
       data: {
-        name: body.name,
-        pem: body.pem
+        oemOrgId: org.id,
+        deviceFamilyId: deviceFamily.id,
+        authorityId: root.authorityId,
+        authorityRootId: root.id,
+        rsaSerialHex: rsaSerial,
+        ecdsaSerialHex: ecdsaSerial,
+        deviceId: body.deviceId
       }
     });
-    reply.send(anchor);
+    reply.send(created);
   });
 
-  app.delete("/trust-anchors/:anchorId", async (request, reply) => {
+  app.post("/anchors/:id/revoke", async (request, reply) => {
     const user = requireUser(request);
     if (!requireOemRole(user.role as string, reply)) {
       return;
     }
+    const org = await requireOemOrg(user.sub as string);
     const prisma = getPrisma();
-    const { anchorId } = request.params as { anchorId: string };
-    await prisma.deviceFamilyTrustAnchor.deleteMany({ where: { trustAnchorId: anchorId } });
-    await prisma.trustAnchor.delete({ where: { id: anchorId } });
-    reply.send({ ok: true });
+    const { id } = request.params as { id: string };
+    const anchor = await prisma.deviceEntry.findFirst({
+      where: { id, oemOrgId: org.id }
+    });
+    if (!anchor) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Anchor not found"));
+      return;
+    }
+    if (anchor.revokedAt) {
+      reply.send({ ok: true, revokedAt: anchor.revokedAt });
+      return;
+    }
+    const updated = await prisma.deviceEntry.update({
+      where: { id },
+      data: { revokedAt: new Date() }
+    });
+    reply.send({ ok: true, revokedAt: updated.revokedAt });
+  });
+
+  app.post("/anchors/generate-keybox", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) {
+      return;
+    }
+    const org = await requireOemOrg(user.sub as string);
+    const prisma = getPrisma();
+    const body = request.body as { deviceFamilyId?: string; deviceId?: string };
+    if (!body.deviceFamilyId) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing deviceFamilyId"));
+      return;
+    }
+    const deviceFamily = await prisma.deviceFamily.findFirst({
+      where: { id: body.deviceFamilyId, oemOrgId: org.id }
+    });
+    if (!deviceFamily) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
+      return;
+    }
+    const localAuthority = await getLocalAuthority(prisma);
+    if (!localAuthority || localAuthority.roots.length === 0) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Local authority root not configured"));
+      return;
+    }
+    const root = localAuthority.roots[0];
+    const rsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
+    const ecdsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
+    const deviceId = body.deviceId || `UA_${Date.now()}`;
+    const anchor = await prisma.deviceEntry.create({
+      data: {
+        oemOrgId: org.id,
+        deviceFamilyId: deviceFamily.id,
+        authorityId: localAuthority.id,
+        authorityRootId: root.id,
+        rsaSerialHex,
+        ecdsaSerialHex,
+        deviceId
+      }
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: user.sub as string,
+        action: "KEYBOX_GENERATED",
+        details: {
+          deviceFamilyId: deviceFamily.id,
+          anchorId: anchor.id,
+          deviceId,
+          authorityId: localAuthority.id
+        }
+      }
+    });
+    const xml = generateKeyboxXml(app.config, deviceId, true, true, rsaSerialHex, ecdsaSerialHex);
+    reply.header("Content-Type", "application/xml").send(xml);
   });
 
   app.get("/reports/failing-devices", async (request, reply) => {

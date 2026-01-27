@@ -24,14 +24,36 @@ type Settings = {
   activeKid: string;
 };
 
+type AuthorityRoot = {
+  id: string;
+  name?: string | null;
+  pem: string;
+};
+
+type Authority = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  roots: AuthorityRoot[];
+  statusCachedAt?: string | null;
+  keyAvailability?: {
+    rsa: boolean;
+    ecdsa: boolean;
+  };
+};
+
 export default function AdminPage() {
   const [backends, setBackends] = useState<Backend[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [authorities, setAuthorities] = useState<Authority[]>([]);
   const [newUser, setNewUser] = useState({ email: "", password: "", role: "app_dev" });
   const [newBackendUrl, setNewBackendUrl] = useState("");
   const [newBackendName, setNewBackendName] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
+  const [newAuthorityName, setNewAuthorityName] = useState("");
+  const [newAuthorityUrl, setNewAuthorityUrl] = useState("");
   const [userError, setUserError] = useState<string | null>(null);
   const [passwordUpdates, setPasswordUpdates] = useState<Record<string, string>>({});
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
@@ -40,12 +62,15 @@ export default function AdminPage() {
 
   const fetchAll = async () => {
     if (!access) return;
-    const [backendRes, userRes, settingsRes] = await Promise.all([
+    const [backendRes, userRes, settingsRes, authorityRes] = await Promise.all([
       fetch(`${backendUrl}/api/v1/federation/backends`),
       fetch(`${backendUrl}/api/v1/admin/users`, {
         headers: { Authorization: `Bearer ${access}` }
       }),
       fetch(`${backendUrl}/api/v1/admin/settings`, {
+        headers: { Authorization: `Bearer ${access}` }
+      }),
+      fetch(`${backendUrl}/api/v1/admin/attestation-authorities`, {
         headers: { Authorization: `Bearer ${access}` }
       })
     ]);
@@ -59,6 +84,9 @@ export default function AdminPage() {
       const data = await settingsRes.json();
       setSettings(data);
       setExternalUrl(data.externalUrl || "");
+    }
+    if (authorityRes.ok) {
+      setAuthorities(await authorityRes.json());
     }
   };
 
@@ -172,6 +200,32 @@ export default function AdminPage() {
     fetchAll();
   };
 
+  const createAuthority = async () => {
+    if (!access || !newAuthorityName || !newAuthorityUrl) return;
+    const res = await fetch(`${backendUrl}/api/v1/admin/attestation-authorities`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ name: newAuthorityName, baseUrl: newAuthorityUrl })
+    });
+    if (res.ok) {
+      setNewAuthorityName("");
+      setNewAuthorityUrl("");
+      fetchAll();
+    }
+  };
+
+  const refreshAuthority = async (id: string) => {
+    if (!access) return;
+    await fetch(`${backendUrl}/api/v1/admin/attestation-authorities/${id}/refresh`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    fetchAll();
+  };
+
   return (
     <Layout>
       <div className="grid lg:grid-cols-[1.2fr,1fr] gap-8">
@@ -274,6 +328,72 @@ export default function AdminPage() {
           )}
         </section>
       </div>
+
+      <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
+        <h2 className="text-xl font-semibold">Attestation Authorities</h2>
+        <div className="mt-4 space-y-3">
+          <div className="grid md:grid-cols-2 gap-2">
+            <input
+              className="rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="Authority name"
+              value={newAuthorityName}
+              onChange={(e) => setNewAuthorityName(e.target.value)}
+            />
+            <input
+              className="rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="Base URL (https://...)"
+              value={newAuthorityUrl}
+              onChange={(e) => setNewAuthorityUrl(e.target.value)}
+            />
+          </div>
+          <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={createAuthority}>
+            Add Authority
+          </button>
+        </div>
+        <div className="mt-6 space-y-4">
+          {authorities.map((authority) => (
+            <div key={authority.id} className="rounded-xl border border-gray-200 p-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{authority.name}</div>
+                  <div className="text-xs text-gray-500">{authority.baseUrl}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    RSA: {authority.keyAvailability?.rsa ? "✅" : "❌"} · ECDSA:{" "}
+                    {authority.keyAvailability?.ecdsa ? "✅" : "❌"}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Status cached: {authority.statusCachedAt ? new Date(authority.statusCachedAt).toLocaleString() : "never"}
+                  </div>
+                </div>
+                <button
+                  className="rounded-lg bg-moss text-white px-3 py-2 text-xs"
+                  onClick={() => refreshAuthority(authority.id)}
+                >
+                  Refresh Roots/Status
+                </button>
+              </div>
+              <div className="mt-4">
+                <div className="text-sm font-semibold">Roots</div>
+                <div className="mt-2 space-y-2">
+                  {authority.roots.map((root) => (
+                    <div key={root.id} className="rounded-lg border border-gray-200 p-2">
+                      <div className="text-xs text-gray-500">
+                        {root.name ? `Name: ${root.name}` : "Unnamed root"}
+                      </div>
+                      <div className="mt-1 text-xs text-gray-400 break-words">
+                        {root.pem.slice(0, 120)}...
+                      </div>
+                    </div>
+                  ))}
+                  {authority.roots.length === 0 && (
+                    <div className="text-xs text-gray-500">No roots loaded.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
         <h2 className="text-xl font-semibold">Federation Management</h2>

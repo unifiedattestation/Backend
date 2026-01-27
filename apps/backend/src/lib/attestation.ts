@@ -59,6 +59,11 @@ function extractExtensionValue(der: Buffer, oid: string): Buffer {
   throw new Error("Missing attestation extension");
 }
 
+export function getCertificateSerial(der: Buffer): string {
+  const cert = new crypto.X509Certificate(der);
+  return cert.serialNumber.toUpperCase();
+}
+
 function bytesToHex(value: string): string {
   return Buffer.from(value, "binary").toString("hex");
 }

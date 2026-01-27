@@ -14,6 +14,10 @@ export type Config = {
   backendId: string;
   externalUrl?: string;
   configPath: string;
+  ua_root_cert_path?: string;
+  ua_root_private_key_path?: string;
+  ua_intermediate_cert_path?: string;
+  ua_intermediate_private_key_path?: string;
   signingKeys: {
     activeKid: string;
     keys: SigningKey[];
@@ -73,6 +77,10 @@ export function loadConfig(): Config {
     backendId,
     externalUrl: process.env.UA_EXTERNAL_URL || loaded.externalUrl,
     configPath,
+    ua_root_cert_path: loaded.ua_root_cert_path,
+    ua_root_private_key_path: loaded.ua_root_private_key_path,
+    ua_intermediate_cert_path: loaded.ua_intermediate_cert_path,
+    ua_intermediate_private_key_path: loaded.ua_intermediate_private_key_path,
     signingKeys: {
       ...loaded.signingKeys,
       activeKid: process.env.UA_ACTIVE_KID || loaded.signingKeys.activeKid

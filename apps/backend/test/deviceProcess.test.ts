@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import deviceRoutes from "../src/routes/device";
 
 const mockPrisma = {
-  trustAnchor: { findMany: vi.fn() },
   buildPolicy: { findMany: vi.fn() },
   app: { findUnique: vi.fn() },
   deviceReport: { upsert: vi.fn() }
@@ -25,7 +24,23 @@ const mockAttestation = {
 vi.mock("../src/lib/attestation", () => ({
   parseCertificateChain: vi.fn(() => [Buffer.from("01", "hex")]),
   verifyCertificateChain: vi.fn(),
-  parseKeyAttestation: vi.fn(() => mockAttestation)
+  parseKeyAttestation: vi.fn(() => mockAttestation),
+  getCertificateSerial: vi.fn(() => "ABC")
+}));
+
+vi.mock("../src/services/attestationAuthorities", () => ({
+  getAuthorityForSerial: vi.fn(() => ({
+    authorityId: "auth1",
+    authorityRootId: "root1",
+    authorityRoot: { id: "root1", pem: "pem" },
+    rsaSerialHex: "ABC",
+    ecdsaSerialHex: "DEF",
+    revokedAt: null,
+    deviceFamilyId: "family1",
+    authority: { baseUrl: "http://example.com", enabled: true, isLocal: false }
+  })),
+  getAuthorityRoots: vi.fn(() => [{ id: "root1", pem: "pem" }]),
+  getAuthorityStatus: vi.fn(() => ({ revokedSerials: [], suspendedSerials: [] }))
 }));
 
 function buildApp() {
@@ -55,7 +70,6 @@ function buildApp() {
 
 describe("/api/v1/device/process", () => {
   it("accepts unknown projectId if it matches attestation packageName", async () => {
-    mockPrisma.trustAnchor.findMany.mockResolvedValue([{ pem: "pem" }]);
     mockPrisma.buildPolicy.findMany.mockResolvedValue([]);
     mockPrisma.app.findUnique.mockResolvedValue(null);
     mockPrisma.deviceReport.upsert.mockResolvedValue({});
@@ -75,7 +89,6 @@ describe("/api/v1/device/process", () => {
   });
 
   it("rejects when projectId does not match attestation packageName", async () => {
-    mockPrisma.trustAnchor.findMany.mockResolvedValue([{ pem: "pem" }]);
     mockPrisma.buildPolicy.findMany.mockResolvedValue([]);
     mockPrisma.app.findUnique.mockResolvedValue(null);
     mockPrisma.deviceReport.upsert.mockResolvedValue({});
@@ -95,7 +108,7 @@ describe("/api/v1/device/process", () => {
 
     expect(response.statusCode).toBe(400);
     const body = response.json();
-    expect(body.code).toBe("PROJECT_ID_MISMATCH");
+    expect(body.code).toBe("APP_ID_MISMATCH");
 
     mockAttestation.app.packageName = "com.example.app";
   });

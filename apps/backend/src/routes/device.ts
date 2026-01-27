@@ -5,7 +5,17 @@ import { getPrisma } from "../lib/prisma";
 import { getActiveSigningKey } from "../lib/config";
 import { signIntegrityToken, sha256Hex } from "../lib/crypto";
 import { errorResponse } from "../lib/errors";
-import { parseCertificateChain, parseKeyAttestation, verifyCertificateChain } from "../lib/attestation";
+import {
+  getCertificateSerial,
+  parseCertificateChain,
+  parseKeyAttestation,
+  verifyCertificateChain
+} from "../lib/attestation";
+import {
+  getAuthorityForSerial,
+  getAuthorityRoots,
+  getAuthorityStatus
+} from "../services/attestationAuthorities";
 
 function computeScopedDeviceId(backendId: string, projectId: string, spkiDer: Buffer): string {
   return sha256Hex(Buffer.concat([Buffer.from(backendId, "utf8"), Buffer.from(projectId, "utf8"), spkiDer]));
@@ -137,32 +147,93 @@ export default async function deviceRoutes(app: FastifyInstance) {
         reply.code(400).send(errorResponse("INVALID_CHAIN", "Empty attestation chain"));
         return;
       }
-      const trustAnchors = await prisma.trustAnchor.findMany({});
-      if (trustAnchors.length === 0) {
-        reply.code(400).send(errorResponse("NO_TRUST_ANCHORS", "No OEM trust anchors configured"));
+      let anchorEntry;
+      try {
+        anchorEntry = await getAuthorityForSerial(getCertificateSerial(chain[0]));
+      } catch (error) {
+        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Unable to read certificate serial"));
+        return;
+      }
+      if (!anchorEntry || !anchorEntry.authority || !anchorEntry.authority.enabled) {
+        reply
+          .code(400)
+          .send(errorResponse("INVALID_ATTESTATION", "Unknown attestation authority"));
+        return;
+      }
+      if (anchorEntry.deviceFamily && anchorEntry.deviceFamily.enabled === false) {
+        reply.code(400).send(errorResponse("POLICY_FAIL", "Device disabled"));
+        return;
+      }
+      if (!anchorEntry.authorityRootId || !anchorEntry.authorityRoot) {
+        reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "No selected root for device"));
+        return;
+      }
+      const roots = await getAuthorityRoots(anchorEntry.authorityId);
+      const selectedRoot = roots.find((root) => root.id === anchorEntry.authorityRootId);
+      if (!selectedRoot) {
+        reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "Selected root not available"));
         return;
       }
       try {
-        verifyCertificateChain(chain, trustAnchors.map((anchor) => anchor.pem));
+        verifyCertificateChain(chain, [selectedRoot.pem]);
       } catch (error) {
         reply.code(400).send(errorResponse("INVALID_CHAIN", "Attestation chain validation failed"));
         return;
       }
 
-      const attestation = parseKeyAttestation(chain[0]);
+      let attestation;
+      try {
+        attestation = parseKeyAttestation(chain[0]);
+      } catch (error) {
+        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Unable to parse attestation"));
+        return;
+      }
+      try {
+        const serial = getCertificateSerial(chain[0]).toUpperCase();
+        const normalized = serial.replace(/^0+/, "");
+        const matchesAnchor =
+          normalized === anchorEntry.rsaSerialHex ||
+          normalized === anchorEntry.ecdsaSerialHex;
+        if (!matchesAnchor) {
+          reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Device serial mismatch"));
+          return;
+        }
+        if (anchorEntry.revokedAt) {
+          reply.code(400).send(errorResponse("REVOKED_CERT", "Certificate is revoked"));
+          return;
+        }
+        if (!anchorEntry.authority.isLocal) {
+          const status = await getAuthorityStatus(anchorEntry.authorityId, anchorEntry.authority.baseUrl);
+          if (status.revokedSerials.includes(normalized) || status.suspendedSerials.includes(normalized)) {
+            reply.code(400).send(errorResponse("REVOKED_CERT", "Certificate is revoked"));
+            return;
+          }
+        }
+      } catch (error) {
+        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Authority status unavailable"));
+        return;
+      }
       if (attestation.attestationChallengeHex !== body.requestHash.toLowerCase()) {
         reply.code(400).send(errorResponse("CHALLENGE_MISMATCH", "attestationChallenge mismatch"));
         return;
       }
       if (!attestation.app.packageName || attestation.app.signerDigests.length === 0) {
-        reply.code(400).send(errorResponse("INVALID_CHAIN", "Missing app identity in attestation"));
+        reply
+          .code(400)
+          .send(errorResponse("INVALID_ATTESTATION", "Missing app identity in attestation"));
         return;
       }
       if (attestation.app.packageName !== body.projectId) {
-        reply
-          .code(400)
-          .send(errorResponse("PROJECT_ID_MISMATCH", "projectId does not match attestation"));
+        reply.code(400).send(errorResponse("APP_ID_MISMATCH", "projectId does not match attestation"));
         return;
+      }
+      const appRecord = await prisma.app.findUnique({ where: { projectId: body.projectId } });
+      if (appRecord) {
+        const signerDigests = attestation.app.signerDigests.map((digest) => digest.toLowerCase());
+        if (!signerDigests.includes(appRecord.signerDigestSha256.toLowerCase())) {
+          reply.code(400).send(errorResponse("APP_ID_MISMATCH", "Signer mismatch"));
+          return;
+        }
       }
 
       const scopedDeviceId = computeScopedDeviceId(
@@ -173,7 +244,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
 
       const verdict = evaluateIntegrity(attestation);
       const buildPolicies = await prisma.buildPolicy.findMany({
-        where: { enabled: true },
+        where: { enabled: true, deviceFamilyId: anchorEntry.deviceFamilyId },
         orderBy: { createdAt: "desc" }
       });
       const match = matchBuildPolicy(buildPolicies, attestation);
@@ -195,7 +266,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
       const signingKey = getActiveSigningKey(app.config);
       const token = signIntegrityToken(tokenPayload, signingKey);
 
-      const appRecord = await prisma.app.findUnique({ where: { projectId: body.projectId } });
       await prisma.deviceReport.upsert({
         where: {
           projectId_scopedDeviceId: {
@@ -210,7 +280,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           lastSeen: new Date(),
           lastVerdict: verdict,
           lastState: attestation.deviceIntegrity,
-          deviceFamilyId: match.deviceFamilyId,
+          deviceFamilyId: anchorEntry.deviceFamilyId,
           buildPolicyId: match.buildPolicyId,
           buildPolicyName: match.buildPolicyName
         },
@@ -222,7 +292,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           lastSeen: new Date(),
           lastVerdict: verdict,
           lastState: attestation.deviceIntegrity,
-          deviceFamilyId: match.deviceFamilyId,
+          deviceFamilyId: anchorEntry.deviceFamilyId,
           buildPolicyId: match.buildPolicyId,
           buildPolicyName: match.buildPolicyName
         }

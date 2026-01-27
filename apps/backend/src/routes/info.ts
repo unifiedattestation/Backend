@@ -1,4 +1,6 @@
+import fs from "fs";
 import { FastifyInstance } from "fastify";
+import { getPrisma } from "../lib/prisma";
 
 export default async function infoRoutes(app: FastifyInstance) {
   app.get("/", async () => {
@@ -10,6 +12,28 @@ export default async function infoRoutes(app: FastifyInstance) {
     return {
       backendId: app.config.backendId,
       publicKeys
+    };
+  });
+
+  app.get("/root", async () => {
+    const rootPath = app.config.ua_root_cert_path;
+    if (!rootPath || !fs.existsSync(rootPath)) {
+      return { roots: [] };
+    }
+    const pem = fs.readFileSync(rootPath, "utf8").trim();
+    return { roots: [pem] };
+  });
+
+  app.get("/status", async () => {
+    const prisma = getPrisma();
+    const revoked = await prisma.deviceEntry.findMany({
+      where: { revokedAt: { not: null }, authority: { isLocal: true } },
+      select: { rsaSerialHex: true, ecdsaSerialHex: true }
+    });
+    const revokedSerials = revoked.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex]);
+    return {
+      revokedSerials,
+      suspendedSerials: []
     };
   });
 }

@@ -6,6 +6,7 @@ import { requireUser } from "../lib/auth";
 import { errorResponse } from "../lib/errors";
 import { saveConfig } from "../lib/config";
 import { registerUser } from "../services/auth";
+import { refreshAuthorityBundle } from "../services/attestationAuthorities";
 
 export default async function adminRoutes(app: FastifyInstance) {
   app.get("/settings", async (request, reply) => {
@@ -148,4 +149,79 @@ export default async function adminRoutes(app: FastifyInstance) {
     await prisma.user.delete({ where: { id } });
     reply.send({ ok: true });
   });
+
+  app.get("/attestation-authorities", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const authorities = await prisma.attestationAuthority.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { roots: true, status: true }
+    });
+    const response = authorities.map((authority) => {
+      const keyTypes = authority.roots.map((root) => {
+        try {
+          const cert = new crypto.X509Certificate(root.pem);
+          return cert.publicKey.asymmetricKeyType || "unknown";
+        } catch {
+          return "unknown";
+        }
+      });
+      const hasRsa = keyTypes.includes("rsa");
+      const hasEcdsa = keyTypes.includes("ec");
+      return {
+        id: authority.id,
+        name: authority.name,
+        baseUrl: authority.baseUrl,
+        enabled: authority.enabled,
+        isLocal: authority.isLocal,
+        roots: authority.roots,
+        statusCachedAt: authority.status?.fetchedAt || null,
+        keyAvailability: {
+          rsa: hasRsa,
+          ecdsa: hasEcdsa
+        }
+      };
+    });
+    reply.send(response);
+  });
+
+  app.post("/attestation-authorities", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const body = request.body as { name?: string; baseUrl?: string };
+    if (!body.name || !body.baseUrl) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing name or baseUrl"));
+      return;
+    }
+    const prisma = getPrisma();
+    const created = await prisma.attestationAuthority.create({
+      data: { name: body.name, baseUrl: body.baseUrl }
+    });
+    reply.send(created);
+  });
+
+  app.post("/attestation-authorities/:id/refresh", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const authority = await prisma.attestationAuthority.findUnique({ where: { id } });
+    if (!authority) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Authority not found"));
+      return;
+    }
+    await refreshAuthorityBundle(authority.id, authority.baseUrl);
+    reply.send({ ok: true });
+  });
+
 }

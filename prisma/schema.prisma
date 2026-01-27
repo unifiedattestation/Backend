@@ -30,6 +30,7 @@ model User {
   oemOrg       OemOrg? @relation("OemOrgMembers", fields: [oemOrgId], references: [id])
   oemOrgId     String?
   ownedOemOrg  OemOrg? @relation("OemOrgOwner")
+  auditLogs    AuditLog[]
 }
 
 model App {
@@ -75,6 +76,7 @@ model OemOrg {
   createdAt    DateTime @default(now())
   users        User[]   @relation("OemOrgMembers")
   deviceFamilies DeviceFamily[]
+  deviceEntries DeviceEntry[]
 }
 
 model DeviceFamily {
@@ -85,30 +87,69 @@ model DeviceFamily {
   model               String?
   manufacturer        String?
   brand               String?
+  enabled             Boolean  @default(true)
   createdAt           DateTime @default(now())
   oemOrg              OemOrg   @relation(fields: [oemOrgId], references: [id])
-  trustAnchors        DeviceFamilyTrustAnchor[]
   buildPolicies       BuildPolicy[]
   reports             DeviceReport[]
+  deviceEntries       DeviceEntry[]
 }
 
-model TrustAnchor {
-  id             String   @id @default(cuid())
-  name           String
-  pem            String
-  createdAt      DateTime @default(now())
-  deviceFamilies DeviceFamilyTrustAnchor[]
+model AttestationAuthority {
+  id        String   @id @default(cuid())
+  name      String
+  baseUrl   String
+  enabled   Boolean  @default(true)
+  isLocal   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  roots     AttestationRoot[]
+  status    AttestationStatusCache?
+  devices   DeviceEntry[]
 }
 
-model DeviceFamilyTrustAnchor {
-  id             String   @id @default(cuid())
+model AttestationRoot {
+  id           String   @id @default(cuid())
+  authorityId  String
+  name         String?
+  pem          String
+  createdAt    DateTime @default(now())
+  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
+  deviceEntries DeviceEntry[]
+}
+
+model AttestationStatusCache {
+  id           String   @id @default(cuid())
+  authorityId  String   @unique
+  revokedSerials Json
+  suspendedSerials Json
+  fetchedAt    DateTime @default(now())
+  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
+}
+
+model DeviceEntry {
+  id           String   @id @default(cuid())
+  authorityId  String
+  authorityRootId String
+  oemOrgId     String
   deviceFamilyId String
-  trustAnchorId  String
-  createdAt      DateTime @default(now())
-  deviceFamily   DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
-  trustAnchor    TrustAnchor @relation(fields: [trustAnchorId], references: [id])
+  deviceId     String?
+  rsaSerialHex   String   @unique
+  ecdsaSerialHex String   @unique
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
+  authorityRoot AttestationRoot @relation(fields: [authorityRootId], references: [id])
+  oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
+  deviceFamily DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
+}
 
-  @@unique([deviceFamilyId, trustAnchorId])
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  action      String
+  details     Json
+  createdAt   DateTime @default(now())
+  actor       User     @relation(fields: [actorUserId], references: [id])
 }
 
 model BuildPolicy {

@@ -7,6 +7,7 @@ import { loadConfig } from "./lib/config";
 import { HttpError } from "./lib/errors";
 import { RateLimiter } from "./services/rateLimiter";
 import { ensureDefaultAdmin } from "./services/auth";
+import { ensureLocalAuthority } from "./services/localAuthority";
 import authRoutes from "./routes/auth";
 import infoRoutes from "./routes/info";
 import deviceRoutes from "./routes/device";
@@ -78,6 +79,7 @@ export function buildServer() {
 
   app.addHook("onReady", async () => {
     await ensureDefaultAdmin();
+    await ensureLocalAuthority(config);
   });
 
   return app;
