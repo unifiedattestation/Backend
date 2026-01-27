@@ -164,17 +164,21 @@ export default async function deviceRoutes(app: FastifyInstance) {
         reply.code(400).send(errorResponse("POLICY_FAIL", "Device disabled"));
         return;
       }
-      if (!anchorEntry.authorityRootId || !anchorEntry.authorityRoot) {
+      if (!anchorEntry.rsaRootId || !anchorEntry.ecdsaRootId) {
         reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "No selected root for device"));
         return;
       }
       const roots = await getAuthorityRoots(anchorEntry.authorityId);
-      const selectedRoot = roots.find((root) => root.id === anchorEntry.authorityRootId);
-      if (!selectedRoot) {
-        reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "Selected root not available"));
-        return;
-      }
       try {
+        const serial = getCertificateSerial(chain[0]).toUpperCase();
+        const normalized = serial.replace(/^0+/, "");
+        const isRsaSerial = normalized === anchorEntry.rsaSerialHex;
+        const rootId = isRsaSerial ? anchorEntry.rsaRootId : anchorEntry.ecdsaRootId;
+        const selectedRoot = roots.find((root) => root.id === rootId);
+        if (!selectedRoot) {
+          reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "Selected root not available"));
+          return;
+        }
         verifyCertificateChain(chain, [selectedRoot.pem]);
       } catch (error) {
         reply.code(400).send(errorResponse("INVALID_CHAIN", "Attestation chain validation failed"));

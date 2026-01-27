@@ -73,10 +73,15 @@ model OemOrg {
   ownerUser    User     @relation("OemOrgOwner", fields: [ownerUserId], references: [id])
   manufacturer String?
   brand        String?
+  rsaRootCertPem String?
+  rsaRootKeyPem  String?
+  ecdsaRootCertPem String?
+  ecdsaRootKeyPem  String?
   createdAt    DateTime @default(now())
   users        User[]   @relation("OemOrgMembers")
   deviceFamilies DeviceFamily[]
   deviceEntries DeviceEntry[]
+  attestationRoots AttestationRoot[]
 }
 
 model DeviceFamily {
@@ -110,11 +115,14 @@ model AttestationAuthority {
 model AttestationRoot {
   id           String   @id @default(cuid())
   authorityId  String
+  oemOrgId     String?
   name         String?
   pem          String
   createdAt    DateTime @default(now())
   authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
-  deviceEntries DeviceEntry[]
+  oemOrg       OemOrg? @relation(fields: [oemOrgId], references: [id])
+  rsaDeviceEntries DeviceEntry[] @relation("DeviceRsaRoot")
+  ecdsaDeviceEntries DeviceEntry[] @relation("DeviceEcdsaRoot")
 }
 
 model AttestationStatusCache {
@@ -129,16 +137,18 @@ model AttestationStatusCache {
 model DeviceEntry {
   id           String   @id @default(cuid())
   authorityId  String
-  authorityRootId String
   oemOrgId     String
   deviceFamilyId String
   deviceId     String?
   rsaSerialHex   String   @unique
   ecdsaSerialHex String   @unique
+  rsaRootId     String
+  ecdsaRootId   String
   revokedAt    DateTime?
   createdAt    DateTime @default(now())
   authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
-  authorityRoot AttestationRoot @relation(fields: [authorityRootId], references: [id])
+  rsaRoot       AttestationRoot @relation("DeviceRsaRoot", fields: [rsaRootId], references: [id])
+  ecdsaRoot     AttestationRoot @relation("DeviceEcdsaRoot", fields: [ecdsaRootId], references: [id])
   oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
   deviceFamily DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
 }

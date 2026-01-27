@@ -40,7 +40,12 @@ type AttestationServer = {
   id: string;
   name: string;
   baseUrl: string;
-  roots: { id: string; subject: string; serialHex: string }[];
+  isLocal: boolean;
+  statusCachedAt?: string | null;
+  keyAvailability?: {
+    rsa: boolean;
+    ecdsa: boolean;
+  };
 };
 
 type DeviceEntry = {
@@ -48,7 +53,6 @@ type DeviceEntry = {
   rsaSerialHex: string;
   ecdsaSerialHex: string;
   revokedAt?: string | null;
-  deviceId?: string | null;
   authorityName: string;
   root: { subject: string; serialHex: string };
   deviceCodename?: string | null;
@@ -96,10 +100,9 @@ export default function OemPage() {
   const [attestationServers, setAttestationServers] = useState<AttestationServer[]>([]);
   const [deviceEntries, setDeviceEntries] = useState<DeviceEntry[]>([]);
   const [deviceForm, setDeviceForm] = useState({
-    rootId: "",
+    authorityId: "",
     rsaSerialHex: "",
-    ecdsaSerialHex: "",
-    deviceId: ""
+    ecdsaSerialHex: ""
   });
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
@@ -339,8 +342,8 @@ export default function OemPage() {
       setDeviceError("Select a device first.");
       return null;
     }
-    if (!deviceForm.rootId || !deviceForm.rsaSerialHex || !deviceForm.ecdsaSerialHex) {
-      setDeviceError("Select a root and enter RSA + ECDSA serials.");
+    if (!deviceForm.authorityId || !deviceForm.rsaSerialHex || !deviceForm.ecdsaSerialHex) {
+      setDeviceError("Select an authority and enter RSA + ECDSA serials.");
       return null;
     }
     setDeviceError(null);
@@ -353,10 +356,9 @@ export default function OemPage() {
       },
       body: JSON.stringify({
         deviceFamilyId: selectedFamily.id,
-        authorityRootId: deviceForm.rootId,
+        authorityId: deviceForm.authorityId,
         rsaSerialHex: deviceForm.rsaSerialHex,
-        ecdsaSerialHex: deviceForm.ecdsaSerialHex,
-        deviceId: deviceForm.deviceId || undefined
+        ecdsaSerialHex: deviceForm.ecdsaSerialHex
       })
     });
     if (!res.ok) {
@@ -365,7 +367,7 @@ export default function OemPage() {
       return null;
     }
     const created = await res.json();
-    setDeviceForm({ rootId: "", rsaSerialHex: "", ecdsaSerialHex: "", deviceId: "" });
+    setDeviceForm({ authorityId: "", rsaSerialHex: "", ecdsaSerialHex: "" });
     loadAnchors(selectedFamily.id);
     return created as { id: string };
   };
@@ -385,7 +387,7 @@ export default function OemPage() {
     loadAnchors(selectedFamily.id);
   };
 
-  const downloadKeybox = async (deviceId?: string | null) => {
+  const downloadKeybox = async () => {
     if (!access) {
       setDeviceError("Not authenticated.");
       return;
@@ -403,8 +405,7 @@ export default function OemPage() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        deviceFamilyId: selectedFamily.id,
-        deviceId: deviceId || undefined
+        deviceFamilyId: selectedFamily.id
       })
     });
     if (!res.ok) {
@@ -416,7 +417,7 @@ export default function OemPage() {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `keybox_${deviceId || "device"}.xml`;
+    link.download = `keybox_${selectedFamily.codename || "device"}.xml`;
     link.click();
     window.URL.revokeObjectURL(url);
     setDeviceNotice("Keybox download started.");
@@ -424,15 +425,14 @@ export default function OemPage() {
   };
 
   const createAndGenerateKeybox = async () => {
-    const currentDeviceId = deviceForm.deviceId;
-    await downloadKeybox(currentDeviceId || undefined);
+    await downloadKeybox();
   };
 
   const selectFamily = (family: DeviceFamily) => {
     setSelectedFamily(family);
     setFamilyEdit({ enabled: family.enabled });
     setActiveTab("device");
-    setDeviceForm({ rootId: "", rsaSerialHex: "", ecdsaSerialHex: "", deviceId: "" });
+    setDeviceForm({ authorityId: "", rsaSerialHex: "", ecdsaSerialHex: "" });
     loadBuilds(family.id);
     loadReports(family.id);
   };
@@ -694,17 +694,17 @@ export default function OemPage() {
                     <div className="space-y-3">
                       <select
                         className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                        value={deviceForm.rootId}
-                        onChange={(e) => setDeviceForm({ ...deviceForm, rootId: e.target.value })}
+                        value={deviceForm.authorityId}
+                        onChange={(e) =>
+                          setDeviceForm({ ...deviceForm, authorityId: e.target.value })
+                        }
                       >
-                        <option value="">Select attestation root</option>
-                        {attestationServers.flatMap((server) =>
-                          server.roots.map((root) => (
-                            <option key={root.id} value={root.id}>
-                              {server.name} — {root.subject} (serial: {root.serialHex})
-                            </option>
-                          ))
-                        )}
+                        <option value="">Select attestation authority</option>
+                        {attestationServers.map((server) => (
+                          <option key={server.id} value={server.id}>
+                            {server.isLocal ? "Backend (Local)" : server.name}
+                          </option>
+                        ))}
                       </select>
                       <input
                         className="w-full rounded-lg border border-gray-300 px-3 py-2"
@@ -721,12 +721,6 @@ export default function OemPage() {
                         onChange={(e) =>
                           setDeviceForm({ ...deviceForm, ecdsaSerialHex: e.target.value })
                         }
-                      />
-                      <input
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                        placeholder="Device ID for keybox (optional)"
-                        value={deviceForm.deviceId}
-                        onChange={(e) => setDeviceForm({ ...deviceForm, deviceId: e.target.value })}
                       />
                       <div className="flex flex-wrap gap-2">
                         <button

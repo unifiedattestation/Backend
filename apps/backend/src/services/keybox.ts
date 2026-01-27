@@ -1,13 +1,11 @@
 import crypto from "crypto";
 import fs from "fs";
-import forge from "node-forge";
+import type * as x509Types from "@peculiar/x509";
 import { Config } from "../lib/config";
 
 type UaProvisioningMaterial = {
   rootCertPem: string;
   rootPrivateKeyPem: string;
-  intermediateCertPem?: string;
-  intermediatePrivateKeyPem?: string;
 };
 
 type GeneratedKey = {
@@ -22,56 +20,89 @@ function readPemFile(pathname?: string): string | undefined {
   return content.trim();
 }
 
-function loadProvisioningMaterial(config: Config): UaProvisioningMaterial {
-  const rootCertPem = readPemFile(config.ua_root_cert_path);
-  const rootPrivateKeyPem = readPemFile(config.ua_root_private_key_path);
-  if (!rootCertPem || !rootPrivateKeyPem) {
-    throw new Error("UA root cert/private key paths are not configured");
-  }
-  const intermediateCertPem = readPemFile(config.ua_intermediate_cert_path);
-  const intermediatePrivateKeyPem = readPemFile(config.ua_intermediate_private_key_path);
-  if ((intermediateCertPem && !intermediatePrivateKeyPem) || (!intermediateCertPem && intermediatePrivateKeyPem)) {
-    throw new Error("UA intermediate cert/private key must be provided together");
-  }
-  return {
-    rootCertPem,
-    rootPrivateKeyPem,
-    intermediateCertPem,
-    intermediatePrivateKeyPem
-  };
-}
-
 function randomSerialHex(): string {
   const bytes = crypto.randomBytes(16);
   return bytes.toString("hex").toUpperCase();
 }
 
-function createLeafCertificate(
+let x509Module: typeof x509Types | null = null;
+let x509CryptoReady = false;
+
+async function loadX509() {
+  if (!x509Module) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    x509Module = require("@peculiar/x509") as typeof x509Types;
+  }
+  if (!x509CryptoReady) {
+    if (!crypto.webcrypto) {
+      throw new Error("WebCrypto is not available for X.509 generation");
+    }
+    x509Module.X509CertificateGenerator.crypto = crypto.webcrypto;
+    x509CryptoReady = true;
+  }
+  return x509Module;
+}
+
+function toPem(label: string, der: ArrayBuffer) {
+  const b64 = Buffer.from(der).toString("base64");
+  const lines = b64.match(/.{1,64}/g) || [];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+async function importSigningKey(issuerPrivateKeyPem: string, algorithm: "rsa" | "ecdsa") {
+  const subtle = crypto.webcrypto.subtle;
+  const keyObject = crypto.createPrivateKey(issuerPrivateKeyPem);
+  const pkcs8Der = keyObject.export({ type: "pkcs8", format: "der" });
+  if (algorithm === "rsa") {
+    return subtle.importKey(
+      "pkcs8",
+      pkcs8Der,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return subtle.importKey("pkcs8", pkcs8Der, { name: "ECDSA", namedCurve: "P-256" }, false, [
+    "sign"
+  ]);
+}
+
+function keyUsageForAlgorithm(algorithm: "rsa" | "ecdsa") {
+  return algorithm === "rsa"
+    ? x509Module!.KeyUsageFlags.digitalSignature | x509Module!.KeyUsageFlags.keyEncipherment
+    : x509Module!.KeyUsageFlags.digitalSignature;
+}
+
+async function createLeafCertificate(
   leafPublicKeyPem: string,
   issuerCertPem: string,
   issuerPrivateKeyPem: string,
   subjectCommonName: string,
-  serialHex: string
-): string {
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = forge.pki.publicKeyFromPem(leafPublicKeyPem);
-  cert.serialNumber = serialHex;
-  cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000);
-  const issuerCert = forge.pki.certificateFromPem(issuerCertPem);
-  cert.setIssuer(issuerCert.subject.attributes);
-  cert.setSubject([{ name: "commonName", value: subjectCommonName }]);
-  cert.setExtensions([
-    { name: "basicConstraints", cA: false },
-    {
-      name: "keyUsage",
-      digitalSignature: true,
-      keyEncipherment: true
-    }
-  ]);
-  const issuerKey = forge.pki.privateKeyFromPem(issuerPrivateKeyPem);
-  cert.sign(issuerKey, forge.md.sha256.create());
-  return forge.pki.certificateToPem(cert).trim();
+  serialHex: string,
+  algorithm: "rsa" | "ecdsa"
+): Promise<string> {
+  const { X509CertificateGenerator, Name, BasicConstraintsExtension, KeyUsagesExtension, PemConverter } =
+    await loadX509();
+  const issuer = new crypto.X509Certificate(issuerCertPem);
+  const leafPublicKey = crypto.createPublicKey(leafPublicKeyPem);
+  const signingKey = await importSigningKey(issuerPrivateKeyPem, algorithm);
+  const cert = await X509CertificateGenerator.create({
+    serialNumber: serialHex,
+    notBefore: new Date(),
+    notAfter: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
+    publicKey: leafPublicKey.export({ type: "spki", format: "der" }),
+    subject: new Name(`CN=${subjectCommonName}`),
+    issuer: new Name(issuer.subject),
+    signingKey,
+    extensions: [
+      new BasicConstraintsExtension(false, undefined, true),
+      new KeyUsagesExtension(keyUsageForAlgorithm(algorithm), true)
+    ]
+  });
+  return (
+    PemConverter?.encode?.(cert.rawData, "CERTIFICATE")?.trim() ??
+    toPem("CERTIFICATE", cert.rawData)
+  );
 }
 
 function generateKeyPair(algorithm: "ecdsa" | "rsa") {
@@ -94,28 +125,20 @@ function generateKeyPair(algorithm: "ecdsa" | "rsa") {
   };
 }
 
-function buildCertificateChain(
+async function buildCertificateChain(
   leafPublicKeyPem: string,
   material: UaProvisioningMaterial,
   label: string,
-  serialHex: string
-): string[] {
-  if (material.intermediateCertPem && material.intermediatePrivateKeyPem) {
-    const leafCert = createLeafCertificate(
-      leafPublicKeyPem,
-      material.intermediateCertPem,
-      material.intermediatePrivateKeyPem,
-      label,
-      serialHex
-    );
-    return [leafCert, material.intermediateCertPem.trim(), material.rootCertPem.trim()];
-  }
-  const leafCert = createLeafCertificate(
+  serialHex: string,
+  algorithm: "rsa" | "ecdsa"
+): Promise<string[]> {
+  const leafCert = await createLeafCertificate(
     leafPublicKeyPem,
     material.rootCertPem,
     material.rootPrivateKeyPem,
     label,
-    serialHex
+    serialHex,
+    algorithm
   );
   return [leafCert, material.rootCertPem.trim()];
 }
@@ -133,49 +156,79 @@ function buildKeyXml(entry: GeneratedKey): string {
   )}</PrivateKey><CertificateChain><NumberOfCertificates>${entry.certificateChainPem.length}</NumberOfCertificates>${certsXml}</CertificateChain></Key>`;
 }
 
-export function generateKeyboxXml(
+export async function generateKeyboxXml(
   config: Config,
   deviceId: string,
   includeRsa: boolean,
   includeEcdsa: boolean,
   rsaSerialHex?: string,
   ecdsaSerialHex?: string
-): string {
+): Promise<string> {
   if (!includeRsa || !includeEcdsa) {
     throw new Error("Keybox must include both RSA and ECDSA keys");
   }
-  const material = loadProvisioningMaterial(config);
-  const rsaSerial = (rsaSerialHex || randomSerialHex()).replace(/^0+/, "").toUpperCase();
-  const ecdsaSerial = (ecdsaSerialHex || randomSerialHex()).replace(/^0+/, "").toUpperCase();
+  const rsaCert = readPemFile(config.ua_root_rsa_cert_path);
+  const rsaKey = readPemFile(config.ua_root_rsa_private_key_path);
+  const ecdsaCert = readPemFile(config.ua_root_ecdsa_cert_path);
+  const ecdsaKey = readPemFile(config.ua_root_ecdsa_private_key_path);
+  if (!rsaCert || !rsaKey || !ecdsaCert || !ecdsaKey) {
+    throw new Error("UA root cert/private key paths are not configured");
+  }
+  return generateKeyboxXmlWithDualRoots(
+    { rootCertPem: rsaCert, rootPrivateKeyPem: rsaKey },
+    { rootCertPem: ecdsaCert, rootPrivateKeyPem: ecdsaKey },
+    deviceId,
+    rsaSerialHex || randomSerialHex(),
+    ecdsaSerialHex || randomSerialHex()
+  );
+}
+
+export async function generateKeyboxXmlWithDualRoots(
+  rsaRoots: { rootCertPem: string; rootPrivateKeyPem: string },
+  ecdsaRoots: { rootCertPem: string; rootPrivateKeyPem: string },
+  deviceId: string,
+  rsaSerialHex: string,
+  ecdsaSerialHex: string
+): Promise<string> {
+  const rsaMaterial: UaProvisioningMaterial = {
+    rootCertPem: rsaRoots.rootCertPem,
+    rootPrivateKeyPem: rsaRoots.rootPrivateKeyPem
+  };
+  const ecdsaMaterial: UaProvisioningMaterial = {
+    rootCertPem: ecdsaRoots.rootCertPem,
+    rootPrivateKeyPem: ecdsaRoots.rootPrivateKeyPem
+  };
   const ecdsaKeys = generateKeyPair("ecdsa");
   const rsaKeys = generateKeyPair("rsa");
   const ecdsaEntry: GeneratedKey = {
     algorithm: "ecdsa",
     privateKeyPem: ecdsaKeys.privateKeyPem,
-    certificateChainPem: buildCertificateChain(
+    certificateChainPem: await buildCertificateChain(
       ecdsaKeys.publicKeyPem,
-      material,
+      ecdsaMaterial,
       "UA ECDSA Key",
-      ecdsaSerial
+      ecdsaSerialHex,
+      "ecdsa"
     )
   };
   const rsaEntry: GeneratedKey = {
     algorithm: "rsa",
     privateKeyPem: rsaKeys.privateKeyPem,
-    certificateChainPem: buildCertificateChain(
+    certificateChainPem: await buildCertificateChain(
       rsaKeys.publicKeyPem,
-      material,
+      rsaMaterial,
       "UA RSA Key",
-      rsaSerial
+      rsaSerialHex,
+      "rsa"
     )
   };
-  const xmlBody =
+  return (
     `<?xml version="1.0"?>\n` +
     `<AndroidAttestation>\n` +
     `<NumberOfKeyboxes>1</NumberOfKeyboxes>\n` +
     `<Keybox DeviceID="${deviceId}">` +
     `${buildKeyXml(ecdsaEntry)}${buildKeyXml(rsaEntry)}` +
     `</Keybox>\n` +
-    `</AndroidAttestation>`;
-  return xmlBody;
+    `</AndroidAttestation>`
+  );
 }

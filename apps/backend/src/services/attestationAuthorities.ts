@@ -18,7 +18,12 @@ export async function getAuthorityForSerial(serialNumber: string) {
     where: {
       OR: [{ rsaSerialHex: normalized }, { ecdsaSerialHex: normalized }]
     },
-    include: { authority: true, authorityRoot: true, deviceFamily: true }
+    include: {
+      authority: true,
+      rsaRoot: true,
+      ecdsaRoot: true,
+      deviceFamily: true
+    }
   });
   return entry;
 }

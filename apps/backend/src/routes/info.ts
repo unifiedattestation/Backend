@@ -16,12 +16,16 @@ export default async function infoRoutes(app: FastifyInstance) {
   });
 
   app.get("/root", async () => {
-    const rootPath = app.config.ua_root_cert_path;
-    if (!rootPath || !fs.existsSync(rootPath)) {
-      return { roots: [] };
+    const roots: string[] = [];
+    const rsaPath = app.config.ua_root_rsa_cert_path;
+    const ecdsaPath = app.config.ua_root_ecdsa_cert_path;
+    if (rsaPath && fs.existsSync(rsaPath)) {
+      roots.push(fs.readFileSync(rsaPath, "utf8").trim());
     }
-    const pem = fs.readFileSync(rootPath, "utf8").trim();
-    return { roots: [pem] };
+    if (ecdsaPath && fs.existsSync(ecdsaPath)) {
+      roots.push(fs.readFileSync(ecdsaPath, "utf8").trim());
+    }
+    return { roots };
   });
 
   app.get("/status", async () => {

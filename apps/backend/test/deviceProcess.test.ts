@@ -31,15 +31,20 @@ vi.mock("../src/lib/attestation", () => ({
 vi.mock("../src/services/attestationAuthorities", () => ({
   getAuthorityForSerial: vi.fn(() => ({
     authorityId: "auth1",
-    authorityRootId: "root1",
-    authorityRoot: { id: "root1", pem: "pem" },
     rsaSerialHex: "ABC",
     ecdsaSerialHex: "DEF",
+    rsaRootId: "rootRsa",
+    ecdsaRootId: "rootEcdsa",
+    rsaRoot: { id: "rootRsa", pem: "pem" },
+    ecdsaRoot: { id: "rootEcdsa", pem: "pem" },
     revokedAt: null,
     deviceFamilyId: "family1",
     authority: { baseUrl: "http://example.com", enabled: true, isLocal: false }
   })),
-  getAuthorityRoots: vi.fn(() => [{ id: "root1", pem: "pem" }]),
+  getAuthorityRoots: vi.fn(() => [
+    { id: "rootRsa", pem: "pem" },
+    { id: "rootEcdsa", pem: "pem" }
+  ]),
   getAuthorityStatus: vi.fn(() => ({ revokedSerials: [], suspendedSerials: [] }))
 }));
 

@@ -5,11 +5,13 @@ import { getPrisma } from "../lib/prisma";
 const LOCAL_AUTHORITY_NAME = "Unified Attestation (Local)";
 
 export async function ensureLocalAuthority(config: Config) {
-  const rootPath = config.ua_root_cert_path;
-  if (!rootPath || !fs.existsSync(rootPath)) {
+  const rsaRootPath = config.ua_root_rsa_cert_path;
+  const ecdsaRootPath = config.ua_root_ecdsa_cert_path;
+  if (!rsaRootPath || !ecdsaRootPath || !fs.existsSync(rsaRootPath) || !fs.existsSync(ecdsaRootPath)) {
     return;
   }
-  const pem = fs.readFileSync(rootPath, "utf8").trim();
+  const rsaPem = fs.readFileSync(rsaRootPath, "utf8").trim();
+  const ecdsaPem = fs.readFileSync(ecdsaRootPath, "utf8").trim();
   const prisma = getPrisma();
   const existing = await prisma.attestationAuthority.findFirst({
     where: { isLocal: true }
@@ -25,8 +27,12 @@ export async function ensureLocalAuthority(config: Config) {
         roots: {
           create: [
             {
-              pem,
-              name: "UA Root"
+              pem: rsaPem,
+              name: "UA Root RSA"
+            },
+            {
+              pem: ecdsaPem,
+              name: "UA Root ECDSA"
             }
           ]
         }
@@ -41,17 +47,17 @@ export async function ensureLocalAuthority(config: Config) {
     });
   }
   const roots = await prisma.attestationRoot.findMany({
-    where: { authorityId: existing.id }
+    where: { authorityId: existing.id, oemOrgId: null }
   });
-  const match = roots.find((root) => root.pem.trim() === pem);
-  if (!match) {
-    await prisma.attestationRoot.deleteMany({ where: { authorityId: existing.id } });
-    await prisma.attestationRoot.create({
-      data: {
-        authorityId: existing.id,
-        pem,
-        name: "UA Root"
-      }
+  const hasRsa = roots.some((root) => root.pem.trim() === rsaPem);
+  const hasEcdsa = roots.some((root) => root.pem.trim() === ecdsaPem);
+  if (!hasRsa || !hasEcdsa) {
+    await prisma.attestationRoot.deleteMany({ where: { authorityId: existing.id, oemOrgId: null } });
+    await prisma.attestationRoot.createMany({
+      data: [
+        { authorityId: existing.id, pem: rsaPem, name: "UA Root RSA" },
+        { authorityId: existing.id, pem: ecdsaPem, name: "UA Root ECDSA" }
+      ]
     });
   }
   return existing;
