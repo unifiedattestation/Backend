@@ -1,9 +1,9 @@
-backendId: "0191ae7b-ff5a-7b1f-9b1e-b7d1c0b7842c"
-externalUrl: "http://localhost:3001"
 ua_root_cert_path: null
 ua_root_private_key_path: null
 ua_intermediate_cert_path: null
 ua_intermediate_private_key_path: null
+backendId: 0191ae7b-ff5a-7b1f-9b1e-b7d1c0b7842c
+externalUrl: http://localhost:3001
 signingKeys:
   activeKid: "k1"
   keys:

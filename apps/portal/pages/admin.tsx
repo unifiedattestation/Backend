@@ -20,7 +20,6 @@ type User = {
 
 type Settings = {
   backendId: string;
-  externalUrl?: string;
   activeKid: string;
 };
 
@@ -51,7 +50,6 @@ export default function AdminPage() {
   const [newUser, setNewUser] = useState({ email: "", password: "", role: "app_dev" });
   const [newBackendUrl, setNewBackendUrl] = useState("");
   const [newBackendName, setNewBackendName] = useState("");
-  const [externalUrl, setExternalUrl] = useState("");
   const [newAuthorityName, setNewAuthorityName] = useState("");
   const [newAuthorityUrl, setNewAuthorityUrl] = useState("");
   const [userError, setUserError] = useState<string | null>(null);
@@ -83,7 +81,6 @@ export default function AdminPage() {
     if (settingsRes.ok) {
       const data = await settingsRes.json();
       setSettings(data);
-      setExternalUrl(data.externalUrl || "");
     }
     if (authorityRes.ok) {
       setAuthorities(await authorityRes.json());
@@ -176,19 +173,6 @@ export default function AdminPage() {
       setNewBackendName("");
       fetchAll();
     }
-  };
-
-  const setUrl = async () => {
-    if (!access) return;
-    await fetch(`${backendUrl}/api/v1/admin/settings/external-url`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${access}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ externalUrl })
-    });
-    fetchAll();
   };
 
   const rotateKey = async () => {
@@ -310,16 +294,7 @@ export default function AdminPage() {
             <div className="mt-4 space-y-3">
               <div className="text-sm">Backend ID: {settings.backendId}</div>
               <div className="text-sm">Active Key: {settings.activeKid}</div>
-              <input
-                className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                placeholder="External URL"
-                value={externalUrl}
-                onChange={(e) => setExternalUrl(e.target.value)}
-              />
               <div className="flex gap-2">
-                <button className="rounded-lg bg-clay text-white px-4 py-2" onClick={setUrl}>
-                  Save URL
-                </button>
                 <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={rotateKey}>
                   Rotate Signing Key
                 </button>
