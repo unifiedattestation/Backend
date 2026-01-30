@@ -180,6 +180,7 @@ function main() {
     console.log("Signer digests:", parsed.app.signerDigests);
     console.log("Attestation security:", parsed.attestationSecurityLevel);
     console.log("Keymaster security:", parsed.keymasterSecurityLevel);
+    console.log("Key origin:", parsed.deviceIntegrity.origin);
     console.log("OS version (raw):", parsed.deviceIntegrity.osVersionRaw);
     console.log("OS patch level (raw):", parsed.deviceIntegrity.osPatchLevelRaw);
     console.log("Vendor patch level (raw):", parsed.deviceIntegrity.vendorPatchLevelRaw);

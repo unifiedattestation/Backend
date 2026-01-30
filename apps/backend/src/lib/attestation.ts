@@ -8,6 +8,7 @@ type ParsedAuthorizationList = {
     packageName?: string;
     signerDigests: string[];
   };
+  origin?: string;
   verifiedBootState?: string;
   deviceLocked?: boolean;
   verifiedBootKey?: string;
@@ -184,6 +185,22 @@ function parseVerifiedBootState(value: Buffer): string {
   return level === 0 ? "VERIFIED" : "UNVERIFIED";
 }
 
+function parseOrigin(value: Buffer): string {
+  const origin = parseDerInteger(value);
+  switch (origin) {
+    case 0:
+      return "GENERATED";
+    case 1:
+      return "DERIVED";
+    case 2:
+      return "IMPORTED";
+    case 3:
+      return "UNKNOWN";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 function extractOctetStringValue(value: Buffer): Buffer {
   try {
     const { tlv } = readDerTlv(value, 0);
@@ -286,9 +303,7 @@ function parseAuthorizationList(buffer: Buffer): ParsedAuthorizationList {
     }
     switch (entry.tagNumber) {
       case 702:
-        if (result.deviceLocked === undefined) {
-          result.deviceLocked = parseBoolOrInt(value);
-        }
+        result.origin = parseOrigin(value);
         break;
       case 704:
         try {
