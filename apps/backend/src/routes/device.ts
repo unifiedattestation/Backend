@@ -61,6 +61,7 @@ function matchBuildPolicy(
     verifiedBootHashHex: string | null;
     osVersionRaw: number | null;
     minOsPatchLevelRaw: number | null;
+    enabled: boolean;
   }>,
   attestation: ReturnType<typeof parseKeyAttestation>
 ): BuildPolicyMatch {
@@ -71,6 +72,9 @@ function matchBuildPolicy(
   const osPatchLevelRaw = integrity.osPatchLevel;
 
   for (const policy of policies) {
+    if (!policy.enabled) {
+      continue;
+    }
     if (!verifiedBootKeyHex || policy.verifiedBootKeyHex.toLowerCase() !== verifiedBootKeyHex) {
       continue;
     }
@@ -358,11 +362,18 @@ export default async function deviceRoutes(app: FastifyInstance) {
       );
 
       const verdict = evaluateIntegrity(attestation);
+      const buildPolicyTotal = await prisma.buildPolicy.count({
+        where: { deviceFamilyId: anchorEntry.deviceFamilyId }
+      });
       const buildPolicies = await prisma.buildPolicy.findMany({
         where: { enabled: true, deviceFamilyId: anchorEntry.deviceFamilyId },
         orderBy: { createdAt: "desc" }
       });
       const match = matchBuildPolicy(buildPolicies, attestation);
+      if (buildPolicyTotal > 0 && !match.buildPolicyId) {
+        verdict.reasonCodes.push("BUILD_POLICY_MISMATCH");
+        verdict.isTrusted = false;
+      }
       const now = Math.floor(Date.now() / 1000);
       const exp = now + 60;
       const tokenPayload = {
