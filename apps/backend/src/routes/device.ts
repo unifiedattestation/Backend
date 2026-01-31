@@ -11,7 +11,7 @@ import {
   hasAttestationExtension,
   parseCertificateChain,
   parseKeyAttestation,
-  verifyCertificateChain
+  verifyCertificateChainStrict
 } from "../lib/attestation";
 import {
   getAuthorityForSerial,
@@ -258,7 +258,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           },
           "device.process root comparison"
         );
-        verifyCertificateChain(chain, [selectedRoot.pem]);
+        verifyCertificateChainStrict(chain, [selectedRoot.pem]);
       } catch (error) {
         request.log.error({ err: error, leafSerial }, "device.process chain verification failed");
         reply.code(400).send(errorResponse("INVALID_CHAIN", "Attestation chain validation failed"));
@@ -330,6 +330,20 @@ export default async function deviceRoutes(app: FastifyInstance) {
       } catch (error) {
         request.log.error({ err: error, leafSerial }, "device.process authority status check failed");
         reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Authority status unavailable"));
+        return;
+      }
+      if (attestation.deviceIntegrity.origin && attestation.deviceIntegrity.origin !== "GENERATED") {
+        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Key origin is not GENERATED"));
+        return;
+      }
+      if (attestation.attestationSecurityLevel !== attestation.keymasterSecurityLevel) {
+        reply
+          .code(400)
+          .send(errorResponse("INVALID_ATTESTATION", "Security level mismatch"));
+        return;
+      }
+      if (!attestation.deviceIntegrity.verifiedBootKey || !attestation.deviceIntegrity.verifiedBootState) {
+        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Missing root of trust"));
         return;
       }
       if (attestation.attestationChallengeHex !== body.requestHash.toLowerCase()) {

@@ -464,3 +464,46 @@ export function verifyCertificateChain(
     throw new Error("Untrusted certificate chain");
   }
 }
+
+export function verifyCertificateChainStrict(
+  chain: Buffer[],
+  trustAnchors: string[],
+  validationDate: Date = new Date()
+): void {
+  const certs = chain.map((der) => new crypto.X509Certificate(der));
+  if (certs.length === 0) {
+    throw new Error("Empty certificate chain");
+  }
+  if (!hasAttestationExtension(chain[0])) {
+    throw new Error("Missing attestation extension on leaf");
+  }
+  for (let i = 1; i < chain.length; i += 1) {
+    if (hasAttestationExtension(chain[i])) {
+      throw new Error("Attestation extension present in non-leaf certificate");
+    }
+  }
+  for (let i = 0; i < certs.length - 1; i += 1) {
+    const subject = certs[i];
+    const issuer = certs[i + 1];
+    if (subject.issuer !== issuer.subject) {
+      throw new Error("Certificate name chaining failed");
+    }
+    if (!subject.verify(issuer.publicKey)) {
+      throw new Error("Invalid certificate chain");
+    }
+  }
+  for (let i = 1; i < certs.length; i += 1) {
+    const cert = certs[i];
+    if (validationDate < cert.validFrom || validationDate > cert.validTo) {
+      throw new Error("Certificate validity failed");
+    }
+  }
+  const trustCerts = trustAnchors.map((pem) => new crypto.X509Certificate(pem));
+  const root = certs[certs.length - 1];
+  const trusted = trustCerts.some(
+    (anchor) => root.verify(anchor.publicKey) || root.raw.equals(anchor.raw)
+  );
+  if (!trusted) {
+    throw new Error("Untrusted certificate chain");
+  }
+}
