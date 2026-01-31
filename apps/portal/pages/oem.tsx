@@ -19,10 +19,6 @@ type BuildPolicy = {
   verifiedBootHashHex?: string | null;
   osVersionRaw?: number | null;
   minOsPatchLevelRaw?: number | null;
-  minVendorPatchLevelRaw?: number | null;
-  minBootPatchLevelRaw?: number | null;
-  expectedDeviceLocked?: boolean | null;
-  expectedVerifiedBootState?: string | null;
   enabled: boolean;
   createdAt: string;
 };
@@ -90,10 +86,6 @@ export default function OemPage() {
     verifiedBootHashHex: "",
     osVersionRaw: "",
     minOsPatchLevelRaw: "",
-    minVendorPatchLevelRaw: "",
-    minBootPatchLevelRaw: "",
-    expectedDeviceLocked: "",
-    expectedVerifiedBootState: "",
     enabled: true
   });
 
@@ -245,17 +237,6 @@ export default function OemPage() {
       minOsPatchLevelRaw: buildForm.minOsPatchLevelRaw
         ? Number(buildForm.minOsPatchLevelRaw)
         : undefined,
-      minVendorPatchLevelRaw: buildForm.minVendorPatchLevelRaw
-        ? Number(buildForm.minVendorPatchLevelRaw)
-        : undefined,
-      minBootPatchLevelRaw: buildForm.minBootPatchLevelRaw
-        ? Number(buildForm.minBootPatchLevelRaw)
-        : undefined,
-      expectedDeviceLocked:
-        buildForm.expectedDeviceLocked === ""
-          ? undefined
-          : buildForm.expectedDeviceLocked === "true",
-      expectedVerifiedBootState: buildForm.expectedVerifiedBootState || undefined,
       enabled: buildForm.enabled
     };
     const isEdit = Boolean(buildForm.id);
@@ -279,10 +260,6 @@ export default function OemPage() {
         verifiedBootHashHex: "",
         osVersionRaw: "",
         minOsPatchLevelRaw: "",
-        minVendorPatchLevelRaw: "",
-        minBootPatchLevelRaw: "",
-        expectedDeviceLocked: "",
-        expectedVerifiedBootState: "",
         enabled: true
       });
       loadBuilds(selectedFamily.id);
@@ -297,15 +274,6 @@ export default function OemPage() {
       verifiedBootHashHex: build.verifiedBootHashHex || "",
       osVersionRaw: build.osVersionRaw?.toString() || "",
       minOsPatchLevelRaw: build.minOsPatchLevelRaw?.toString() || "",
-      minVendorPatchLevelRaw: build.minVendorPatchLevelRaw?.toString() || "",
-      minBootPatchLevelRaw: build.minBootPatchLevelRaw?.toString() || "",
-      expectedDeviceLocked:
-        build.expectedDeviceLocked === null || build.expectedDeviceLocked === undefined
-          ? ""
-          : build.expectedDeviceLocked
-          ? "true"
-          : "false",
-      expectedVerifiedBootState: build.expectedVerifiedBootState || "",
       enabled: build.enabled
     });
   };
@@ -598,7 +566,7 @@ export default function OemPage() {
                   />
                   <input
                     className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                    placeholder="Verified boot hash hex (optional)"
+                    placeholder="Verified boot hash hex"
                     value={buildForm.verifiedBootHashHex}
                     onChange={(e) =>
                       setBuildForm({ ...buildForm, verifiedBootHashHex: e.target.value })
@@ -613,55 +581,12 @@ export default function OemPage() {
                     />
                     <input
                       className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                      placeholder="Min OS patch level"
+                      placeholder="OS patch level"
                       value={buildForm.minOsPatchLevelRaw}
                       onChange={(e) =>
                         setBuildForm({ ...buildForm, minOsPatchLevelRaw: e.target.value })
                       }
                     />
-                    <input
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                      placeholder="Min vendor patch"
-                      value={buildForm.minVendorPatchLevelRaw}
-                      onChange={(e) =>
-                        setBuildForm({ ...buildForm, minVendorPatchLevelRaw: e.target.value })
-                      }
-                    />
-                    <input
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                      placeholder="Min boot patch"
-                      value={buildForm.minBootPatchLevelRaw}
-                      onChange={(e) =>
-                        setBuildForm({ ...buildForm, minBootPatchLevelRaw: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                      value={buildForm.expectedDeviceLocked}
-                      onChange={(e) =>
-                        setBuildForm({ ...buildForm, expectedDeviceLocked: e.target.value })
-                      }
-                    >
-                      <option value="">Device locked (any)</option>
-                      <option value="true">Device locked: true</option>
-                      <option value="false">Device locked: false</option>
-                    </select>
-                    <select
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                      value={buildForm.expectedVerifiedBootState}
-                      onChange={(e) =>
-                        setBuildForm({
-                          ...buildForm,
-                          expectedVerifiedBootState: e.target.value
-                        })
-                      }
-                    >
-                      <option value="">Verified boot state (any)</option>
-                      <option value="VERIFIED">VERIFIED</option>
-                      <option value="UNVERIFIED">UNVERIFIED</option>
-                    </select>
                   </div>
                   <label className="flex items-center gap-2 text-sm">
                     <input

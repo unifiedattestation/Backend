@@ -389,10 +389,6 @@ export default async function oemRoutes(app: FastifyInstance) {
       verifiedBootHashHex?: string;
       osVersionRaw?: number;
       minOsPatchLevelRaw?: number;
-      minVendorPatchLevelRaw?: number;
-      minBootPatchLevelRaw?: number;
-      expectedDeviceLocked?: boolean;
-      expectedVerifiedBootState?: string;
       enabled?: boolean;
     };
     if (!body.name || !body.verifiedBootKeyHex) {
@@ -407,10 +403,6 @@ export default async function oemRoutes(app: FastifyInstance) {
         verifiedBootHashHex: body.verifiedBootHashHex?.toLowerCase(),
         osVersionRaw: body.osVersionRaw,
         minOsPatchLevelRaw: body.minOsPatchLevelRaw,
-        minVendorPatchLevelRaw: body.minVendorPatchLevelRaw,
-        minBootPatchLevelRaw: body.minBootPatchLevelRaw,
-        expectedDeviceLocked: body.expectedDeviceLocked,
-        expectedVerifiedBootState: body.expectedVerifiedBootState,
         enabled: body.enabled ?? true
       }
     });
@@ -445,10 +437,6 @@ export default async function oemRoutes(app: FastifyInstance) {
       verifiedBootHashHex?: string | null;
       osVersionRaw?: number | null;
       minOsPatchLevelRaw?: number | null;
-      minVendorPatchLevelRaw?: number | null;
-      minBootPatchLevelRaw?: number | null;
-      expectedDeviceLocked?: boolean | null;
-      expectedVerifiedBootState?: string | null;
       enabled?: boolean;
     };
     const updated = await prisma.buildPolicy.update({
@@ -466,14 +454,6 @@ export default async function oemRoutes(app: FastifyInstance) {
             : build.verifiedBootHashHex,
         osVersionRaw: body.osVersionRaw ?? build.osVersionRaw,
         minOsPatchLevelRaw: body.minOsPatchLevelRaw ?? build.minOsPatchLevelRaw,
-        minVendorPatchLevelRaw: body.minVendorPatchLevelRaw ?? build.minVendorPatchLevelRaw,
-        minBootPatchLevelRaw: body.minBootPatchLevelRaw ?? build.minBootPatchLevelRaw,
-        expectedDeviceLocked:
-          body.expectedDeviceLocked === undefined ? build.expectedDeviceLocked : body.expectedDeviceLocked,
-        expectedVerifiedBootState:
-          body.expectedVerifiedBootState === undefined
-            ? build.expectedVerifiedBootState
-            : body.expectedVerifiedBootState,
         enabled: body.enabled ?? build.enabled
       }
     });

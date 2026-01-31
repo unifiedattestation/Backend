@@ -25,7 +25,13 @@ function computeScopedDeviceId(backendId: string, projectId: string, spkiDer: Bu
 
 function evaluateIntegrity(record: ReturnType<typeof parseKeyAttestation>) {
   const reasons: string[] = [];
-  if (record.deviceIntegrity.verifiedBootState && record.deviceIntegrity.verifiedBootState !== "VERIFIED") {
+  if (
+    record.deviceIntegrity.verifiedBootState &&
+    record.deviceIntegrity.verifiedBootState !== "VERIFIED" &&
+    record.deviceIntegrity.deviceLocked === true &&
+    record.deviceIntegrity.verifiedBootKey &&
+    record.deviceIntegrity.verifiedBootHash
+  ) {
     reasons.push("BOOT_STATE_UNVERIFIED");
   }
   if (record.attestationSecurityLevel !== "TEE" && record.attestationSecurityLevel !== "STRONGBOX") {
@@ -36,15 +42,6 @@ function evaluateIntegrity(record: ReturnType<typeof parseKeyAttestation>) {
   }
   if (!record.deviceIntegrity.osPatchLevel) {
     reasons.push("OS_PATCHLEVEL_MISSING");
-  }
-  if (!record.deviceIntegrity.vendorPatchLevel) {
-    reasons.push("VENDOR_PATCHLEVEL_MISSING");
-  }
-  if (!record.deviceIntegrity.bootPatchLevel) {
-    reasons.push("BOOT_PATCHLEVEL_MISSING");
-  }
-  if (!record.deviceIntegrity.teePatchLevel) {
-    reasons.push("TEE_PATCHLEVEL_MISSING");
   }
   return { isTrusted: reasons.length === 0, reasonCodes: reasons };
 }
@@ -64,10 +61,6 @@ function matchBuildPolicy(
     verifiedBootHashHex: string | null;
     osVersionRaw: number | null;
     minOsPatchLevelRaw: number | null;
-    minVendorPatchLevelRaw: number | null;
-    minBootPatchLevelRaw: number | null;
-    expectedDeviceLocked: boolean | null;
-    expectedVerifiedBootState: string | null;
   }>,
   attestation: ReturnType<typeof parseKeyAttestation>
 ): BuildPolicyMatch {
@@ -76,10 +69,6 @@ function matchBuildPolicy(
   const verifiedBootHashHex = integrity.verifiedBootHash?.toLowerCase();
   const osVersionRaw = integrity.osVersion;
   const osPatchLevelRaw = integrity.osPatchLevel;
-  const vendorPatchLevelRaw = integrity.vendorPatchLevel;
-  const bootPatchLevelRaw = integrity.bootPatchLevel;
-  const verifiedBootState = integrity.verifiedBootState;
-  const deviceLocked = integrity.deviceLocked;
 
   for (const policy of policies) {
     if (!verifiedBootKeyHex || policy.verifiedBootKeyHex.toLowerCase() !== verifiedBootKeyHex) {
@@ -97,26 +86,6 @@ function matchBuildPolicy(
     }
     if (policy.minOsPatchLevelRaw !== null) {
       if (osPatchLevelRaw === undefined || osPatchLevelRaw < policy.minOsPatchLevelRaw) {
-        continue;
-      }
-    }
-    if (policy.minVendorPatchLevelRaw !== null) {
-      if (vendorPatchLevelRaw === undefined || vendorPatchLevelRaw < policy.minVendorPatchLevelRaw) {
-        continue;
-      }
-    }
-    if (policy.minBootPatchLevelRaw !== null) {
-      if (bootPatchLevelRaw === undefined || bootPatchLevelRaw < policy.minBootPatchLevelRaw) {
-        continue;
-      }
-    }
-    if (policy.expectedVerifiedBootState) {
-      if (!verifiedBootState || verifiedBootState !== policy.expectedVerifiedBootState) {
-        continue;
-      }
-    }
-    if (policy.expectedDeviceLocked !== null) {
-      if (deviceLocked === undefined || deviceLocked !== policy.expectedDeviceLocked) {
         continue;
       }
     }

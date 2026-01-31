@@ -170,10 +170,6 @@ model BuildPolicy {
   verifiedBootHashHex     String?
   osVersionRaw            Int?
   minOsPatchLevelRaw      Int?
-  minVendorPatchLevelRaw  Int?
-  minBootPatchLevelRaw    Int?
-  expectedDeviceLocked    Boolean?
-  expectedVerifiedBootState String?
   enabled                 Boolean @default(true)
   createdAt               DateTime @default(now())
   deviceFamily            DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
