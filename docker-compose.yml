@@ -11,9 +11,7 @@ services:
     volumes:
       - ua_pg:/var/lib/postgresql/data
   backend:
-    build:
-      context: .
-      dockerfile: apps/backend/Dockerfile
+    image: ghcr.io/unifiedattestation/backend:latest
     environment:
       DATABASE_URL: postgresql://ua:ua@postgres:5432/ua
       PORT: 3001
@@ -29,9 +27,7 @@ services:
       - ./root/ua_root_ecdsa.crt.pem:/app/root/ua_root_ecdsa.crt.pem:ro
       - ./root/ua_root_ecdsa.key.pem:/app/root/ua_root_ecdsa.key.pem:ro
   portal:
-    build:
-      context: .
-      dockerfile: apps/portal/Dockerfile
+    image: ghcr.io/unifiedattestation/portal:latest
     environment:
       UA_BACKEND_URL: http://backend:3001
     depends_on:
