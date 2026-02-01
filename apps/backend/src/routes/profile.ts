@@ -3,6 +3,7 @@ import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
 import { errorResponse } from "../lib/errors";
 import crypto from "crypto";
+import argon2 from "argon2";
 
 export default async function profileRoutes(app: FastifyInstance) {
   app.get("/", async (request, reply) => {
@@ -152,5 +153,35 @@ export default async function profileRoutes(app: FastifyInstance) {
       manufacturer: body.manufacturer,
       brand: body.brand
     });
+  });
+
+  app.post("/password", async (request, reply) => {
+    const user = requireUser(request);
+    const prisma = getPrisma();
+    const body = request.body as { currentPassword?: string; newPassword?: string };
+    if (!body.currentPassword || !body.newPassword) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing currentPassword or newPassword"));
+      return;
+    }
+    if (body.newPassword.length < 5) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Password must be at least 5 characters"));
+      return;
+    }
+    const record = await prisma.user.findUnique({ where: { id: user.sub as string } });
+    if (!record) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "User not found"));
+      return;
+    }
+    const ok = await argon2.verify(record.passwordHash, body.currentPassword);
+    if (!ok) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Current password is incorrect"));
+      return;
+    }
+    const passwordHash = await argon2.hash(body.newPassword);
+    await prisma.user.update({
+      where: { id: record.id },
+      data: { passwordHash }
+    });
+    reply.send({ ok: true });
   });
 }

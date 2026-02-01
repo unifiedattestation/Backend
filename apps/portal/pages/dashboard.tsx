@@ -28,6 +28,9 @@ export default function Dashboard() {
   const [reports, setReports] = useState<DeviceReport[]>([]);
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [federationBackends, setFederationBackends] = useState<
     { id: string; backendId: string; name: string; status: string }[]
   >([]);
@@ -124,6 +127,27 @@ export default function Dashboard() {
     });
   };
 
+  const changePassword = async () => {
+    if (!access) return;
+    setPasswordMessage(null);
+    const res = await fetch(`${backendUrl}/api/v1/profile/password`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (!res.ok) {
+      const raw = await res.text();
+      setPasswordMessage(raw || "Failed to update password");
+      return;
+    }
+    setCurrentPassword("");
+    setNewPassword("");
+    setPasswordMessage("Password updated.");
+  };
+
   return (
     <Layout>
       <div className="grid lg:grid-cols-[2fr,1fr] gap-8">
@@ -195,6 +219,26 @@ export default function Dashboard() {
             Save
           </button>
         </div>
+        <div className="mt-4 grid md:grid-cols-2 gap-3">
+          <input
+            className="rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="Current password"
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
+          <input
+            className="rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="New password"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+          <button className="rounded-lg bg-moss text-white px-4 py-2" onClick={changePassword}>
+            Change Password
+          </button>
+        </div>
+        {passwordMessage && <div className="text-sm text-red-600 mt-2">{passwordMessage}</div>}
       </section>
 
       <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
