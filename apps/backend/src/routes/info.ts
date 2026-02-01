@@ -25,7 +25,7 @@ export default async function infoRoutes(app: FastifyInstance) {
     if (ecdsaPath && fs.existsSync(ecdsaPath)) {
       roots.push(fs.readFileSync(ecdsaPath, "utf8").trim());
     }
-    return { roots };
+    return roots;
   });
 
   app.get("/status", async () => {
@@ -53,9 +53,13 @@ export default async function infoRoutes(app: FastifyInstance) {
       ...revokedAnchorSerials.filter((serial): serial is string => Boolean(serial)),
       ...revokedOemAnchors.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex])
     ];
-    return {
-      revokedSerials,
-      suspendedSerials: []
-    };
+    const entries: Record<string, { status: "REVOKED"; reason: "UNSPECIFIED" }> = {};
+    for (const serial of revokedSerials) {
+      const normalized = serial.replace(/^0+/, "").toLowerCase();
+      if (normalized) {
+        entries[normalized] = { status: "REVOKED", reason: "UNSPECIFIED" };
+      }
+    }
+    return { entries };
   });
 }

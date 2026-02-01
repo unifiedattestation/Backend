@@ -11,6 +11,29 @@ function normalizeSerial(serial: string): string {
   return serial.replace(/^0+/, "").toUpperCase();
 }
 
+function parseAuthorityStatus(payload: any): AuthorityStatus {
+  if (payload && typeof payload === "object" && "entries" in payload) {
+    const entries = (payload as { entries?: Record<string, { status?: string }> }).entries || {};
+    const revokedSerials: string[] = [];
+    const suspendedSerials: string[] = [];
+    for (const [serial, entry] of Object.entries(entries)) {
+      const normalized = normalizeSerial(serial);
+      if (!normalized) {
+        continue;
+      }
+      if (entry?.status === "REVOKED") {
+        revokedSerials.push(normalized);
+      } else if (entry?.status === "SUSPENDED") {
+        suspendedSerials.push(normalized);
+      }
+    }
+    return { revokedSerials, suspendedSerials };
+  }
+  const revokedSerials = (payload?.revokedSerials || []).map(normalizeSerial);
+  const suspendedSerials = (payload?.suspendedSerials || []).map(normalizeSerial);
+  return { revokedSerials, suspendedSerials };
+}
+
 export async function getAuthorityForSerial(serialNumber: string) {
   const prisma = getPrisma();
   const normalized = normalizeSerial(serialNumber);
@@ -57,9 +80,10 @@ export async function getAuthorityStatus(authorityId: string, baseUrl: string): 
     }
     throw new Error("Failed to fetch authority status");
   }
-  const payload = (await res.json()) as AuthorityStatus;
-  const normalizedRevoked = (payload.revokedSerials || []).map(normalizeSerial);
-  const normalizedSuspended = (payload.suspendedSerials || []).map(normalizeSerial);
+  const payload = await res.json();
+  const parsed = parseAuthorityStatus(payload);
+  const normalizedRevoked = parsed.revokedSerials || [];
+  const normalizedSuspended = parsed.suspendedSerials || [];
   await prisma.attestationStatusCache.upsert({
     where: { authorityId },
     update: {
