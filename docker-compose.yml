@@ -33,7 +33,7 @@ services:
       context: .
       dockerfile: apps/portal/Dockerfile
     environment:
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:3001
+      UA_BACKEND_URL: http://backend:3001
     depends_on:
       - backend
     ports:

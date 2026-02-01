@@ -33,7 +33,10 @@ export function buildServer() {
     reply.header("x-request-id", requestId);
     (request as any).log = request.log.child({ requestId });
 
-    const host = request.headers.host;
+    const forwardedHost = request.headers["x-forwarded-host"];
+    const host = Array.isArray(forwardedHost)
+      ? forwardedHost[0]
+      : forwardedHost || request.headers.host;
     if (host) {
       const forwardedProto = request.headers["x-forwarded-proto"];
       const proto = Array.isArray(forwardedProto)
