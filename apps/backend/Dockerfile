@@ -8,6 +8,7 @@ COPY packages/common packages/common
 COPY apps/backend apps/backend
 COPY prisma prisma
 COPY config.yaml config.yaml
+ENV NODE_OPTIONS=--max-old-space-size=8192
 RUN npm run -w @ua/common build && npm run -w @ua/backend build
 
 FROM node:20-alpine

@@ -4,6 +4,7 @@ COPY package.json package-lock.json* ./
 COPY apps/portal/package.json apps/portal/package.json
 RUN npm install
 COPY apps/portal apps/portal
+ENV NODE_OPTIONS=--max-old-space-size=8192
 RUN npm run -w @ua/portal build
 
 FROM node:20-alpine
