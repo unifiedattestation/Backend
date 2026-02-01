@@ -16,7 +16,12 @@ export async function getAuthorityForSerial(serialNumber: string) {
   const normalized = normalizeSerial(serialNumber);
   const entry = await prisma.deviceEntry.findFirst({
     where: {
-      OR: [{ rsaSerialHex: normalized }, { ecdsaSerialHex: normalized }]
+      OR: [
+        { rsaSerialHex: normalized },
+        { ecdsaSerialHex: normalized },
+        { rsaIntermediateSerialHex: normalized },
+        { ecdsaIntermediateSerialHex: normalized }
+      ]
     },
     include: {
       authority: true,

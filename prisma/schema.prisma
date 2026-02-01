@@ -82,6 +82,21 @@ model OemOrg {
   deviceFamilies DeviceFamily[]
   deviceEntries DeviceEntry[]
   attestationRoots AttestationRoot[]
+  trustAnchors OemTrustAnchor[]
+}
+
+model OemTrustAnchor {
+  id           String   @id @default(cuid())
+  oemOrgId     String
+  rsaCertPem   String
+  rsaKeyPem    String
+  rsaSerialHex String
+  ecdsaCertPem String
+  ecdsaKeyPem  String
+  ecdsaSerialHex String
+  createdAt    DateTime @default(now())
+  revokedAt    DateTime?
+  oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
 }
 
 model DeviceFamily {
@@ -142,6 +157,8 @@ model DeviceEntry {
   deviceId     String?
   rsaSerialHex   String   @unique
   ecdsaSerialHex String   @unique
+  rsaIntermediateSerialHex String?
+  ecdsaIntermediateSerialHex String?
   rsaRootId     String
   ecdsaRootId   String
   revokedAt    DateTime?

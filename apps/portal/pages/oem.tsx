@@ -48,6 +48,8 @@ type DeviceEntry = {
   id: string;
   rsaSerialHex: string;
   ecdsaSerialHex: string;
+  rsaIntermediateSerialHex?: string | null;
+  ecdsaIntermediateSerialHex?: string | null;
   revokedAt?: string | null;
   authorityName: string;
   rsaRoot?: { subject: string; serialHex: string; keyType: string } | null;
@@ -63,6 +65,26 @@ export default function OemPage() {
   const [displayName, setDisplayName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [brand, setBrand] = useState("");
+  const [oemAnchorReady, setOemAnchorReady] = useState(false);
+  const [oemAnchorDetails, setOemAnchorDetails] = useState<{
+    rsa?: { subject: string; serialHex: string };
+    ecdsa?: { subject: string; serialHex: string };
+  } | null>(null);
+  const [activeDeviceAnchors, setActiveDeviceAnchors] = useState(0);
+  const [linkedActiveAnchors, setLinkedActiveAnchors] = useState(0);
+  const [trustAnchorHistory, setTrustAnchorHistory] = useState<
+    Array<{
+      id: string;
+      rsaSerialHex: string;
+      ecdsaSerialHex: string;
+      rsaSubject: string;
+      ecdsaSubject: string;
+      createdAt: string;
+      revokedAt?: string | null;
+    }>
+  >([]);
+  const [oemAnchorNotice, setOemAnchorNotice] = useState<string | null>(null);
+  const [oemAnchorError, setOemAnchorError] = useState<string | null>(null);
   const [federationBackends, setFederationBackends] = useState<
     { id: string; backendId: string; name: string; status: string }[]
   >([]);
@@ -97,7 +119,9 @@ export default function OemPage() {
   const [deviceForm, setDeviceForm] = useState({
     authorityId: "",
     rsaSerialHex: "",
-    ecdsaSerialHex: ""
+    ecdsaSerialHex: "",
+    rsaIntermediateSerialHex: "",
+    ecdsaIntermediateSerialHex: ""
   });
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
@@ -147,6 +171,11 @@ export default function OemPage() {
       setDisplayName(data.displayName || "");
       setManufacturer(data.manufacturer || "");
       setBrand(data.brand || "");
+      setOemAnchorReady(Boolean(data.oemTrustAnchorReady));
+      setOemAnchorDetails(data.oemTrustAnchor || null);
+      setActiveDeviceAnchors(Number(data.activeDeviceAnchors || 0));
+      setLinkedActiveAnchors(Number(data.linkedActiveAnchors || 0));
+      setTrustAnchorHistory(data.trustAnchorHistory || []);
     }
   };
 
@@ -306,6 +335,50 @@ export default function OemPage() {
     });
   };
 
+  const generateOemTrustAnchor = async () => {
+    if (!access) return;
+    setOemAnchorNotice(null);
+    setOemAnchorError(null);
+    const res = await fetch(`${backendUrl}/api/v1/oem/profile/generate-trust-anchor`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (!res.ok) {
+      const raw = await res.text();
+      setOemAnchorError(raw || "Failed to generate OEM trust anchor");
+      return;
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "oem_trust_anchor.xml";
+    link.click();
+    window.URL.revokeObjectURL(url);
+    await loadProfile();
+    setOemAnchorNotice("OEM trust anchor generated and downloaded.");
+  };
+
+  const revokeOemTrustAnchor = async () => {
+    if (!access) return;
+    setOemAnchorNotice(null);
+    setOemAnchorError(null);
+    const res = await fetch(`${backendUrl}/api/v1/oem/profile/revoke-trust-anchor`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (!res.ok) {
+      const raw = await res.text();
+      setOemAnchorError(raw || "Failed to revoke OEM trust anchor");
+      return;
+    }
+    const payload = await res.json();
+    setOemAnchorReady(Boolean(payload.rsaReady && payload.ecdsaReady));
+    await loadProfile();
+    setOemAnchorNotice("OEM trust anchor revoked.");
+  };
+
+
   const createAnchor = async () => {
     if (!access) {
       setDeviceError("Not authenticated.");
@@ -315,8 +388,14 @@ export default function OemPage() {
       setDeviceError("Select a device first.");
       return null;
     }
-    if (!deviceForm.authorityId || !deviceForm.rsaSerialHex || !deviceForm.ecdsaSerialHex) {
-      setDeviceError("Select an authority and enter RSA + ECDSA serials.");
+    if (
+      !deviceForm.authorityId ||
+      !deviceForm.rsaSerialHex ||
+      !deviceForm.ecdsaSerialHex ||
+      !deviceForm.rsaIntermediateSerialHex ||
+      !deviceForm.ecdsaIntermediateSerialHex
+    ) {
+      setDeviceError("Select an authority and enter leaf + intermediate serials.");
       return null;
     }
     setDeviceError(null);
@@ -331,7 +410,9 @@ export default function OemPage() {
         deviceFamilyId: selectedFamily.id,
         authorityId: deviceForm.authorityId,
         rsaSerialHex: deviceForm.rsaSerialHex,
-        ecdsaSerialHex: deviceForm.ecdsaSerialHex
+        ecdsaSerialHex: deviceForm.ecdsaSerialHex,
+        rsaIntermediateSerialHex: deviceForm.rsaIntermediateSerialHex,
+        ecdsaIntermediateSerialHex: deviceForm.ecdsaIntermediateSerialHex
       })
     });
     if (!res.ok) {
@@ -340,7 +421,13 @@ export default function OemPage() {
       return null;
     }
     const created = await res.json();
-    setDeviceForm({ authorityId: "", rsaSerialHex: "", ecdsaSerialHex: "" });
+    setDeviceForm({
+      authorityId: "",
+      rsaSerialHex: "",
+      ecdsaSerialHex: "",
+      rsaIntermediateSerialHex: "",
+      ecdsaIntermediateSerialHex: ""
+    });
     loadAnchors(selectedFamily.id);
     return created as { id: string };
   };
@@ -424,7 +511,13 @@ export default function OemPage() {
       model: family.model || ""
     });
     setActiveTab("device");
-    setDeviceForm({ authorityId: "", rsaSerialHex: "", ecdsaSerialHex: "" });
+    setDeviceForm({
+      authorityId: "",
+      rsaSerialHex: "",
+      ecdsaSerialHex: "",
+      rsaIntermediateSerialHex: "",
+      ecdsaIntermediateSerialHex: ""
+    });
     loadBuilds(family.id);
     loadReports(family.id);
   };
@@ -665,13 +758,13 @@ export default function OemPage() {
                         <option value="">Select attestation authority</option>
                         {attestationServers.map((server) => (
                           <option key={server.id} value={server.id}>
-                            {server.isLocal ? "Backend (Local)" : server.name}
+                            {server.isLocal ? `${server.name}` : server.name}
                           </option>
                         ))}
                       </select>
                       <input
                         className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                        placeholder="RSA attestation serial hex"
+                        placeholder="RSA leaf serial hex"
                         value={deviceForm.rsaSerialHex}
                         onChange={(e) =>
                           setDeviceForm({ ...deviceForm, rsaSerialHex: e.target.value })
@@ -679,10 +772,26 @@ export default function OemPage() {
                       />
                       <input
                         className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                        placeholder="ECDSA attestation serial hex"
+                        placeholder="RSA intermediate serial hex"
+                        value={deviceForm.rsaIntermediateSerialHex}
+                        onChange={(e) =>
+                          setDeviceForm({ ...deviceForm, rsaIntermediateSerialHex: e.target.value })
+                        }
+                      />
+                      <input
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="ECDSA leaf serial hex"
                         value={deviceForm.ecdsaSerialHex}
                         onChange={(e) =>
                           setDeviceForm({ ...deviceForm, ecdsaSerialHex: e.target.value })
+                        }
+                      />
+                      <input
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="ECDSA intermediate serial hex"
+                        value={deviceForm.ecdsaIntermediateSerialHex}
+                        onChange={(e) =>
+                          setDeviceForm({ ...deviceForm, ecdsaIntermediateSerialHex: e.target.value })
                         }
                       />
                       <div className="flex flex-wrap gap-2">
@@ -708,22 +817,28 @@ export default function OemPage() {
                           <div className="text-sm font-semibold">
                             RSA: {device.rsaSerialHex}
                           </div>
-                          {device.rsaRoot && (
+                          {device.rsaIntermediateSerialHex && (
                             <div className="text-xs text-gray-500">
-                              Root (RSA): {device.rsaRoot.subject} · {device.rsaRoot.serialHex}
+                              RSA intermediate: {device.rsaIntermediateSerialHex}
                             </div>
                           )}
                           <div className="text-sm font-semibold">
                             ECDSA: {device.ecdsaSerialHex}
                           </div>
-                          {device.ecdsaRoot && (
+                          {device.ecdsaIntermediateSerialHex && (
                             <div className="text-xs text-gray-500">
-                              Root (ECDSA): {device.ecdsaRoot.subject} · {device.ecdsaRoot.serialHex}
+                              ECDSA intermediate: {device.ecdsaIntermediateSerialHex}
                             </div>
                           )}
-                          {device.revokedAt && (
-                            <div className="text-xs text-red-600">Revoked: {device.revokedAt}</div>
-                          )}
+                          <div className="text-xs text-gray-500">Authority: {device.authorityName}</div>
+                          <div
+                            className={`text-xs ${
+                              device.revokedAt ? "text-red-600" : "text-gray-500"
+                            }`}
+                          >
+                            Created: {new Date(device.createdAt).toLocaleString()}
+                            {device.revokedAt && ` · Revoked: ${new Date(device.revokedAt).toLocaleString()}`}
+                          </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               className="rounded-md bg-rose-500 text-white px-3 py-1 text-xs"
@@ -799,6 +914,75 @@ export default function OemPage() {
           <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={saveProfile}>
             Save
           </button>
+        </div>
+        <div className="mt-6 border-t border-gray-200 pt-4">
+          <h3 className="text-sm font-semibold text-gray-700">OEM Trust Anchor</h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Generate OEM RSA + ECDSA intermediate certs chained to the backend root.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 items-center">
+            <div className="text-xs text-gray-600">
+              Status: {oemAnchorReady ? "active" : "not generated"}
+            </div>
+            <button
+              className="rounded-lg bg-moss text-white px-4 py-2"
+              onClick={generateOemTrustAnchor}
+            >
+              Generate OEM Trust Anchor
+            </button>
+          </div>
+          {trustAnchorHistory.length > 0 ? (
+            <div className="mt-4">
+              <div className="space-y-3">
+                {trustAnchorHistory.map((anchor) => {
+                  const isActive = !anchor.revokedAt;
+                  return (
+                    <div key={anchor.id} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                      <div className="flex items-center justify-between" />
+                      <div className="mt-2 space-y-2">
+                        <div>
+                          <div className="text-xs text-gray-500">RSA Intermediate</div>
+                          <div className="text-sm font-semibold">{anchor.rsaSubject}</div>
+                          <div className="text-xs text-gray-600">Serial: {anchor.rsaSerialHex}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">ECDSA Intermediate</div>
+                          <div className="text-sm font-semibold">{anchor.ecdsaSubject}</div>
+                          <div className="text-xs text-gray-600">
+                            Serial: {anchor.ecdsaSerialHex}
+                          </div>
+                        </div>
+                      </div>
+                      <div className={`mt-2 text-xs ${anchor.revokedAt ? "text-red-600" : "text-gray-500"}`}>
+                        Created: {new Date(anchor.createdAt).toLocaleString()}
+                        {anchor.revokedAt && ` · Revoked: ${new Date(anchor.revokedAt).toLocaleString()}`}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          className="rounded-md bg-rose-500 text-white px-3 py-1 text-xs"
+                          onClick={revokeOemTrustAnchor}
+                          disabled={!isActive}
+                        >
+                          Revoke
+                        </button>
+                        <button
+                          className="rounded-md bg-gray-200 text-gray-800 px-3 py-1 text-xs"
+                          onClick={revokeOemTrustAnchor}
+                          disabled={!isActive}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 text-xs text-gray-500">No OEM trust anchors yet.</div>
+          )}
+          {oemAnchorError && <div className="text-sm text-red-600 mt-2">{oemAnchorError}</div>}
+          {oemAnchorNotice && <div className="text-sm text-green-700 mt-2">{oemAnchorNotice}</div>}
         </div>
       </section>
 

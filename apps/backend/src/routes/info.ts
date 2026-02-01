@@ -32,9 +32,27 @@ export default async function infoRoutes(app: FastifyInstance) {
     const prisma = getPrisma();
     const revoked = await prisma.deviceEntry.findMany({
       where: { revokedAt: { not: null }, authority: { isLocal: true } },
+      select: {
+        rsaSerialHex: true,
+        ecdsaSerialHex: true,
+        rsaIntermediateSerialHex: true,
+        ecdsaIntermediateSerialHex: true
+      }
+    });
+    const revokedAnchorSerials = revoked.flatMap((entry) => [
+      entry.rsaSerialHex,
+      entry.ecdsaSerialHex,
+      entry.rsaIntermediateSerialHex,
+      entry.ecdsaIntermediateSerialHex
+    ]);
+    const revokedOemAnchors = await prisma.oemTrustAnchor.findMany({
+      where: { revokedAt: { not: null } },
       select: { rsaSerialHex: true, ecdsaSerialHex: true }
     });
-    const revokedSerials = revoked.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex]);
+    const revokedSerials = [
+      ...revokedAnchorSerials.filter((serial): serial is string => Boolean(serial)),
+      ...revokedOemAnchors.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex])
+    ];
     return {
       revokedSerials,
       suspendedSerials: []

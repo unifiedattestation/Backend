@@ -4,8 +4,9 @@ import type * as x509Types from "@peculiar/x509";
 import { Config } from "../lib/config";
 
 type UaProvisioningMaterial = {
+  issuerCertPem: string;
+  issuerPrivateKeyPem: string;
   rootCertPem: string;
-  rootPrivateKeyPem: string;
 };
 
 type GeneratedKey = {
@@ -134,13 +135,13 @@ async function buildCertificateChain(
 ): Promise<string[]> {
   const leafCert = await createLeafCertificate(
     leafPublicKeyPem,
-    material.rootCertPem,
-    material.rootPrivateKeyPem,
+    material.issuerCertPem,
+    material.issuerPrivateKeyPem,
     label,
     serialHex,
     algorithm
   );
-  return [leafCert, material.rootCertPem.trim()];
+  return [leafCert, material.issuerCertPem.trim(), material.rootCertPem.trim()];
 }
 
 function wrapPemBlock(pem: string): string {
@@ -175,8 +176,8 @@ export async function generateKeyboxXml(
     throw new Error("UA root cert/private key paths are not configured");
   }
   return generateKeyboxXmlWithDualRoots(
-    { rootCertPem: rsaCert, rootPrivateKeyPem: rsaKey },
-    { rootCertPem: ecdsaCert, rootPrivateKeyPem: ecdsaKey },
+    { issuerCertPem: rsaCert, issuerPrivateKeyPem: rsaKey, rootCertPem: rsaCert },
+    { issuerCertPem: ecdsaCert, issuerPrivateKeyPem: ecdsaKey, rootCertPem: ecdsaCert },
     deviceId,
     rsaSerialHex || randomSerialHex(),
     ecdsaSerialHex || randomSerialHex()
@@ -184,19 +185,21 @@ export async function generateKeyboxXml(
 }
 
 export async function generateKeyboxXmlWithDualRoots(
-  rsaRoots: { rootCertPem: string; rootPrivateKeyPem: string },
-  ecdsaRoots: { rootCertPem: string; rootPrivateKeyPem: string },
+  rsaRoots: { issuerCertPem: string; issuerPrivateKeyPem: string; rootCertPem: string },
+  ecdsaRoots: { issuerCertPem: string; issuerPrivateKeyPem: string; rootCertPem: string },
   deviceId: string,
   rsaSerialHex: string,
   ecdsaSerialHex: string
 ): Promise<string> {
   const rsaMaterial: UaProvisioningMaterial = {
-    rootCertPem: rsaRoots.rootCertPem,
-    rootPrivateKeyPem: rsaRoots.rootPrivateKeyPem
+    issuerCertPem: rsaRoots.issuerCertPem,
+    issuerPrivateKeyPem: rsaRoots.issuerPrivateKeyPem,
+    rootCertPem: rsaRoots.rootCertPem
   };
   const ecdsaMaterial: UaProvisioningMaterial = {
-    rootCertPem: ecdsaRoots.rootCertPem,
-    rootPrivateKeyPem: ecdsaRoots.rootPrivateKeyPem
+    issuerCertPem: ecdsaRoots.issuerCertPem,
+    issuerPrivateKeyPem: ecdsaRoots.issuerPrivateKeyPem,
+    rootCertPem: ecdsaRoots.rootCertPem
   };
   const ecdsaKeys = generateKeyPair("ecdsa");
   const rsaKeys = generateKeyPair("rsa");

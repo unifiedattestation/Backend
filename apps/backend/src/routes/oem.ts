@@ -1,10 +1,12 @@
 import crypto from "crypto";
+import fs from "fs";
 import type * as x509Types from "@peculiar/x509";
 import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
 import { errorResponse } from "../lib/errors";
 import { generateKeyboxXmlWithDualRoots } from "../services/keybox";
+import { loadConfig } from "../lib/config";
 
 async function requireOemOrg(userId: string) {
   const prisma = getPrisma();
@@ -68,6 +70,126 @@ function toPem(label: string, der: ArrayBuffer) {
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
 }
 
+function readPemFile(pathname?: string): string | undefined {
+  if (!pathname) return undefined;
+  return fs.readFileSync(pathname, "utf8").trim();
+}
+
+async function importSigningKey(issuerPrivateKeyPem: string, algorithm: "rsa" | "ecdsa") {
+  const subtle = crypto.webcrypto.subtle;
+  const keyObject = crypto.createPrivateKey(issuerPrivateKeyPem);
+  const pkcs8Der = keyObject.export({ type: "pkcs8", format: "der" });
+  if (algorithm === "rsa") {
+    return subtle.importKey(
+      "pkcs8",
+      pkcs8Der,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return subtle.importKey("pkcs8", pkcs8Der, { name: "ECDSA", namedCurve: "P-256" }, false, [
+    "sign"
+  ]);
+}
+
+async function generateIntermediateSignedByRoot(
+  commonName: string,
+  algorithm: "rsa" | "ecdsa",
+  rootCertPem: string,
+  rootPrivateKeyPem: string
+) {
+  const {
+    X509CertificateGenerator,
+    Name,
+    BasicConstraintsExtension,
+    KeyUsagesExtension,
+    KeyUsageFlags,
+    PemConverter
+  } = await loadX509();
+  const subtle = crypto.webcrypto.subtle;
+  const algorithmParams =
+    algorithm === "rsa"
+      ? {
+          name: "RSASSA-PKCS1-v1_5",
+          modulusLength: 2048,
+          publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+          hash: "SHA-256"
+        }
+      : {
+          name: "ECDSA",
+          namedCurve: "P-256",
+          hash: "SHA-256"
+        };
+  const keys = await subtle.generateKey(algorithmParams, true, ["sign", "verify"]);
+  const issuerCert = new crypto.X509Certificate(rootCertPem);
+  const signingKey = await importSigningKey(rootPrivateKeyPem, algorithm);
+  const serialNumber = crypto.randomBytes(16).toString("hex").toUpperCase();
+  const cert = await X509CertificateGenerator.create({
+    serialNumber,
+    subject: new Name(`C=DE, O=Unified Attestation, CN=${commonName}`),
+    issuer: new Name(issuerCert.subject),
+    notBefore: new Date(),
+    notAfter: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
+    publicKey: keys.publicKey,
+    signingKey,
+    signingAlgorithm: algorithmParams,
+    extensions: [
+      new BasicConstraintsExtension(true, 0, true),
+      new KeyUsagesExtension(KeyUsageFlags.keyCertSign | KeyUsageFlags.digitalSignature, true)
+    ]
+  });
+  const privateKeyDer = await subtle.exportKey("pkcs8", keys.privateKey);
+  const certPem =
+    PemConverter?.encode?.(cert.rawData, "CERTIFICATE")?.trim() ??
+    toPem("CERTIFICATE", cert.rawData);
+  const keyPem =
+    PemConverter?.encode?.(privateKeyDer, "PRIVATE KEY")?.trim() ??
+    toPem("PRIVATE KEY", privateKeyDer);
+  return { certPem, keyPem };
+}
+
+async function ensureBackendRoots(
+  prisma: ReturnType<typeof getPrisma>,
+  config: ReturnType<typeof loadConfig>
+) {
+  const localAuthority = await getLocalAuthority(prisma);
+  if (!localAuthority) {
+    throw new Error("Local authority not configured");
+  }
+  const rsaRootCert = readPemFile(config.ua_root_rsa_cert_path);
+  const ecdsaRootCert = readPemFile(config.ua_root_ecdsa_cert_path);
+  if (!rsaRootCert || !ecdsaRootCert) {
+    throw new Error("UA root cert paths are not configured");
+  }
+  const existingRoots = await prisma.attestationRoot.findMany({
+    where: { authorityId: localAuthority.id, oemOrgId: null }
+  });
+  const hasRsa = existingRoots.some((root) => root.pem.trim() === rsaRootCert.trim());
+  const hasEcdsa = existingRoots.some((root) => root.pem.trim() === ecdsaRootCert.trim());
+  if (!hasRsa) {
+    await prisma.attestationRoot.create({
+      data: {
+        authorityId: localAuthority.id,
+        oemOrgId: null,
+        pem: rsaRootCert,
+        name: "UA Backend RSA Root"
+      }
+    });
+  }
+  if (!hasEcdsa) {
+    await prisma.attestationRoot.create({
+      data: {
+        authorityId: localAuthority.id,
+        oemOrgId: null,
+        pem: ecdsaRootCert,
+        name: "UA Backend ECDSA Root"
+      }
+    });
+  }
+  return { localAuthority, rsaRootCert, ecdsaRootCert };
+}
+
 async function generateSelfSignedRoot(commonName: string, algorithm: "rsa" | "ecdsa") {
   const {
     X509CertificateGenerator,
@@ -116,66 +238,96 @@ async function generateSelfSignedRoot(commonName: string, algorithm: "rsa" | "ec
   };
 }
 
-async function ensureOemRoots(prisma: ReturnType<typeof getPrisma>, org: { id: string; name: string }) {
+async function loadOemTrustAnchor(prisma: ReturnType<typeof getPrisma>, org: { id: string; name: string }) {
   const record = await prisma.oemOrg.findUnique({ where: { id: org.id } });
   if (!record) {
     throw new Error("OEM org not found");
   }
-  let currentRecord = record;
-  let rsaCert = record.rsaRootCertPem;
-  let rsaKey = record.rsaRootKeyPem;
-  let ecdsaCert = record.ecdsaRootCertPem;
-  let ecdsaKey = record.ecdsaRootKeyPem;
-  if (!rsaCert || !rsaKey || !ecdsaCert || !ecdsaKey) {
-    const rsa = await generateSelfSignedRoot(`UA ${org.name} RSA Root`, "rsa");
-    const ecdsa = await generateSelfSignedRoot(`UA ${org.name} ECDSA Root`, "ecdsa");
-    const updated = await prisma.oemOrg.update({
-      where: { id: org.id },
-      data: {
-        rsaRootCertPem: rsa.certPem,
-        rsaRootKeyPem: rsa.keyPem,
-        ecdsaRootCertPem: ecdsa.certPem,
-        ecdsaRootKeyPem: ecdsa.keyPem
-      }
-    });
-    currentRecord = updated;
-    rsaCert = updated.rsaRootCertPem || rsa.certPem;
-    rsaKey = updated.rsaRootKeyPem || rsa.keyPem;
-    ecdsaCert = updated.ecdsaRootCertPem || ecdsa.certPem;
-    ecdsaKey = updated.ecdsaRootKeyPem || ecdsa.keyPem;
+  if (!record.rsaRootCertPem || !record.rsaRootKeyPem || !record.ecdsaRootCertPem || !record.ecdsaRootKeyPem) {
+    throw new Error("OEM trust anchor not initialized");
   }
-  const localAuthority = await getLocalAuthority(prisma);
-  if (!localAuthority) {
-    throw new Error("Local authority not configured");
+  return record;
+}
+
+async function generateOemTrustAnchor(
+  prisma: ReturnType<typeof getPrisma>,
+  org: { id: string; name: string },
+  config: ReturnType<typeof loadConfig>
+) {
+  const { rsaRootCert, ecdsaRootCert } = await ensureBackendRoots(prisma, config);
+  const rsaRootKey = readPemFile(config.ua_root_rsa_private_key_path);
+  const ecdsaRootKey = readPemFile(config.ua_root_ecdsa_private_key_path);
+  if (!rsaRootKey || !ecdsaRootKey) {
+    throw new Error("UA root private keys are not configured");
   }
-  const existingRoots = await prisma.attestationRoot.findMany({
-    where: { authorityId: localAuthority.id, oemOrgId: org.id }
+  const rsa = await generateIntermediateSignedByRoot(
+    `UA ${org.name} RSA Intermediate`,
+    "rsa",
+    rsaRootCert,
+    rsaRootKey
+  );
+  const ecdsa = await generateIntermediateSignedByRoot(
+    `UA ${org.name} ECDSA Intermediate`,
+    "ecdsa",
+    ecdsaRootCert,
+    ecdsaRootKey
+  );
+  const rsaSerialHex = new crypto.X509Certificate(rsa.certPem).serialNumber.toUpperCase();
+  const ecdsaSerialHex = new crypto.X509Certificate(ecdsa.certPem).serialNumber.toUpperCase();
+  const active = await prisma.oemTrustAnchor.findFirst({
+    where: { oemOrgId: org.id, revokedAt: null }
   });
-  const hasRsa = existingRoots.some((root) => root.pem.trim() === rsaCert);
-  const hasEcdsa = existingRoots.some((root) => root.pem.trim() === ecdsaCert);
-  if (!hasRsa || !hasEcdsa) {
-    if (!hasRsa) {
-      await prisma.attestationRoot.create({
-        data: {
-          authorityId: localAuthority.id,
-          oemOrgId: org.id,
-          pem: rsaCert,
-          name: `OEM ${org.name} RSA Root`
-        }
-      });
-    }
-    if (!hasEcdsa) {
-      await prisma.attestationRoot.create({
-        data: {
-          authorityId: localAuthority.id,
-          oemOrgId: org.id,
-          pem: ecdsaCert,
-          name: `OEM ${org.name} ECDSA Root`
-        }
-      });
-    }
+  if (active) {
+    await prisma.oemTrustAnchor.update({
+      where: { id: active.id },
+      data: { revokedAt: new Date() }
+    });
   }
-  return currentRecord;
+  const anchor = await prisma.oemTrustAnchor.create({
+    data: {
+      oemOrgId: org.id,
+      rsaCertPem: rsa.certPem,
+      rsaKeyPem: rsa.keyPem,
+      rsaSerialHex,
+      ecdsaCertPem: ecdsa.certPem,
+      ecdsaKeyPem: ecdsa.keyPem,
+      ecdsaSerialHex
+    }
+  });
+  const updatedOrg = await prisma.oemOrg.update({
+    where: { id: org.id },
+    data: {
+      rsaRootCertPem: rsa.certPem,
+      rsaRootKeyPem: rsa.keyPem,
+      ecdsaRootCertPem: ecdsa.certPem,
+      ecdsaRootKeyPem: ecdsa.keyPem
+    }
+  });
+  return { anchor, org: updatedOrg };
+}
+
+function buildOemTrustAnchorXml(oem: {
+  name: string;
+  rsaRootCertPem: string;
+  rsaRootKeyPem: string;
+  ecdsaRootCertPem: string;
+  ecdsaRootKeyPem: string;
+}) {
+  const wrap = (pem: string) => `\n${pem.trim()}\n`;
+  return (
+    `<?xml version="1.0"?>\n` +
+    `<OemTrustAnchor>\n` +
+    `  <Name>${oem.name}</Name>\n` +
+    `  <Key algorithm="rsa">\n` +
+    `    <PrivateKey format="pem">${wrap(oem.rsaRootKeyPem)}</PrivateKey>\n` +
+    `    <Certificate format="pem">${wrap(oem.rsaRootCertPem)}</Certificate>\n` +
+    `  </Key>\n` +
+    `  <Key algorithm="ecdsa">\n` +
+    `    <PrivateKey format="pem">${wrap(oem.ecdsaRootKeyPem)}</PrivateKey>\n` +
+    `    <Certificate format="pem">${wrap(oem.ecdsaRootCertPem)}</Certificate>\n` +
+    `  </Key>\n` +
+    `</OemTrustAnchor>`
+  );
 }
 
 function pickRootsForAuthority(roots: Array<{ id: string; pem: string }>) {
@@ -225,6 +377,115 @@ export default async function oemRoutes(app: FastifyInstance) {
       }
     });
     reply.send(updated);
+  });
+
+  app.post("/profile/generate-trust-anchor", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) {
+      return;
+    }
+    const prisma = getPrisma();
+    const org = await requireOemOrg(user.sub as string);
+    await prisma.deviceEntry.updateMany({
+      where: { oemOrgId: org.id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    let updated;
+    let anchor;
+    try {
+      const config = loadConfig();
+      const result = await generateOemTrustAnchor(prisma, org, config);
+      updated = result.org;
+      anchor = result.anchor;
+    } catch (error) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", (error as Error).message));
+      return;
+    }
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: user.sub as string,
+        action: "OEM_TRUST_ANCHOR_GENERATED",
+        details: { oemOrgId: org.id, anchorId: anchor?.id }
+      }
+    });
+    if (anchor) {
+      const xml = buildOemTrustAnchorXml({
+        name: org.name,
+        rsaRootCertPem: anchor.rsaCertPem,
+        rsaRootKeyPem: anchor.rsaKeyPem,
+        ecdsaRootCertPem: anchor.ecdsaCertPem,
+        ecdsaRootKeyPem: anchor.ecdsaKeyPem
+      });
+      reply.header("Content-Type", "application/xml").send(xml);
+      return;
+    }
+    reply
+      .code(400)
+      .send(errorResponse("INVALID_REQUEST", "OEM trust anchor not generated"));
+  });
+
+  app.post("/profile/revoke-trust-anchor", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) {
+      return;
+    }
+    const prisma = getPrisma();
+    const org = await requireOemOrg(user.sub as string);
+    const current = await prisma.oemOrg.findUnique({ where: { id: org.id } });
+    if (!current?.rsaRootCertPem || !current.ecdsaRootCertPem) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "OEM trust anchor not found"));
+      return;
+    }
+    let rsaSerial = "";
+    let ecdsaSerial = "";
+    try {
+      rsaSerial = new crypto.X509Certificate(current.rsaRootCertPem).serialNumber.toUpperCase();
+      ecdsaSerial = new crypto.X509Certificate(current.ecdsaRootCertPem).serialNumber.toUpperCase();
+    } catch (error) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Failed to parse OEM trust anchor"));
+      return;
+    }
+    await prisma.deviceEntry.updateMany({
+      where: {
+        oemOrgId: org.id,
+        revokedAt: null,
+        OR: [
+          { rsaIntermediateSerialHex: rsaSerial },
+          { ecdsaIntermediateSerialHex: ecdsaSerial }
+        ]
+      },
+      data: { revokedAt: new Date() }
+    });
+    const activeAnchor = await prisma.oemTrustAnchor.findFirst({
+      where: { oemOrgId: org.id, revokedAt: null }
+    });
+    if (activeAnchor) {
+      await prisma.oemTrustAnchor.update({
+        where: { id: activeAnchor.id },
+        data: { revokedAt: new Date() }
+      });
+    }
+    const updated = await prisma.oemOrg.update({
+      where: { id: org.id },
+      data: {
+        rsaRootCertPem: null,
+        rsaRootKeyPem: null,
+        ecdsaRootCertPem: null,
+        ecdsaRootKeyPem: null
+      }
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: user.sub as string,
+        action: "OEM_TRUST_ANCHOR_REVOKED",
+        details: { oemOrgId: org.id }
+      }
+    });
+    reply.send({
+      ok: true,
+      rsaReady: Boolean(updated.rsaRootCertPem && updated.rsaRootKeyPem),
+      ecdsaReady: Boolean(updated.ecdsaRootCertPem && updated.ecdsaRootKeyPem)
+    });
   });
 
   app.get("/device-families", async (request, reply) => {
@@ -541,6 +802,8 @@ export default async function oemRoutes(app: FastifyInstance) {
       id: anchor.id,
       rsaSerialHex: anchor.rsaSerialHex,
       ecdsaSerialHex: anchor.ecdsaSerialHex,
+      rsaIntermediateSerialHex: anchor.rsaIntermediateSerialHex,
+      ecdsaIntermediateSerialHex: anchor.ecdsaIntermediateSerialHex,
       revokedAt: anchor.revokedAt,
       authorityId: anchor.authorityId,
       authorityName: anchor.authority.name,
@@ -565,8 +828,17 @@ export default async function oemRoutes(app: FastifyInstance) {
       authorityId?: string;
       rsaSerialHex?: string;
       ecdsaSerialHex?: string;
+      rsaIntermediateSerialHex?: string;
+      ecdsaIntermediateSerialHex?: string;
     };
-    if (!body.deviceFamilyId || !body.authorityId || !body.rsaSerialHex || !body.ecdsaSerialHex) {
+    if (
+      !body.deviceFamilyId ||
+      !body.authorityId ||
+      !body.rsaSerialHex ||
+      !body.ecdsaSerialHex ||
+      !body.rsaIntermediateSerialHex ||
+      !body.ecdsaIntermediateSerialHex
+    ) {
       reply
         .code(400)
         .send(errorResponse("INVALID_REQUEST", "Missing deviceFamilyId, authority, or serials"));
@@ -577,6 +849,15 @@ export default async function oemRoutes(app: FastifyInstance) {
     });
     if (!deviceFamily) {
       reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
+      return;
+    }
+    const activeAnchors = await prisma.deviceEntry.count({
+      where: { oemOrgId: org.id, revokedAt: null }
+    });
+    if (activeAnchors > 0) {
+      reply
+        .code(400)
+        .send(errorResponse("INVALID_REQUEST", "Revoke existing anchor before registering a new one"));
       return;
     }
     const authority = await prisma.attestationAuthority.findUnique({
@@ -595,6 +876,8 @@ export default async function oemRoutes(app: FastifyInstance) {
     }
     const rsaSerial = body.rsaSerialHex.replace(/^0+/, "").toUpperCase();
     const ecdsaSerial = body.ecdsaSerialHex.replace(/^0+/, "").toUpperCase();
+    const rsaIntermediateSerial = body.rsaIntermediateSerialHex.replace(/^0+/, "").toUpperCase();
+    const ecdsaIntermediateSerial = body.ecdsaIntermediateSerialHex.replace(/^0+/, "").toUpperCase();
     try {
       const created = await prisma.deviceEntry.create({
         data: {
@@ -605,6 +888,8 @@ export default async function oemRoutes(app: FastifyInstance) {
           ecdsaRootId: ecdsaRoot.id,
           rsaSerialHex: rsaSerial,
           ecdsaSerialHex: ecdsaSerial,
+          rsaIntermediateSerialHex: rsaIntermediateSerial,
+          ecdsaIntermediateSerialHex: ecdsaIntermediateSerial,
           deviceId: deviceFamily.codename
         }
       });
@@ -613,7 +898,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       if (error?.code === "P2002") {
         reply
           .code(409)
-          .send(errorResponse("DUPLICATE_SERIAL", "RSA/ECDSA serial already registered"));
+          .send(errorResponse("DUPLICATE_SERIAL", "Serial already registered"));
         return;
       }
       throw error;
@@ -684,14 +969,32 @@ export default async function oemRoutes(app: FastifyInstance) {
       reply.code(404).send(errorResponse("NOT_FOUND", "Device not found"));
       return;
     }
-    const localAuthority = await getLocalAuthority(prisma);
-    if (!localAuthority) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Local authority not configured"));
+    const activeAnchors = await prisma.deviceEntry.count({
+      where: { oemOrgId: org.id, revokedAt: null }
+    });
+    if (activeAnchors > 0) {
+      reply
+        .code(400)
+        .send(errorResponse("INVALID_REQUEST", "Revoke existing anchor before generating a new one"));
       return;
     }
-    const orgWithRoots = await ensureOemRoots(prisma, org);
+    let localAuthority;
+    let rsaRootCert: string;
+    let ecdsaRootCert: string;
+    let orgWithRoots;
+    try {
+      const config = loadConfig();
+      const backendRoots = await ensureBackendRoots(prisma, config);
+      localAuthority = backendRoots.localAuthority;
+      rsaRootCert = backendRoots.rsaRootCert;
+      ecdsaRootCert = backendRoots.ecdsaRootCert;
+      orgWithRoots = await loadOemTrustAnchor(prisma, org);
+    } catch (error) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", (error as Error).message));
+      return;
+    }
     const authorityRoots = await prisma.attestationRoot.findMany({
-      where: { authorityId: localAuthority.id, oemOrgId: org.id }
+      where: { authorityId: localAuthority.id, oemOrgId: null }
     });
     const { rsaRoot, ecdsaRoot } = pickRootsForAuthority(authorityRoots);
     if (!rsaRoot || !ecdsaRoot) {
@@ -701,6 +1004,12 @@ export default async function oemRoutes(app: FastifyInstance) {
     const rsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
     const ecdsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
     const deviceId = deviceFamily.codename || `UA_${Date.now()}`;
+    const rsaIntermediateSerialHex = new crypto.X509Certificate(
+      orgWithRoots.rsaRootCertPem
+    ).serialNumber.toUpperCase();
+    const ecdsaIntermediateSerialHex = new crypto.X509Certificate(
+      orgWithRoots.ecdsaRootCertPem
+    ).serialNumber.toUpperCase();
     const anchor = await prisma.deviceEntry.create({
       data: {
         oemOrgId: org.id,
@@ -710,6 +1019,8 @@ export default async function oemRoutes(app: FastifyInstance) {
         ecdsaRootId: ecdsaRoot.id,
         rsaSerialHex,
         ecdsaSerialHex,
+        rsaIntermediateSerialHex,
+        ecdsaIntermediateSerialHex,
         deviceId
       }
     });
@@ -725,18 +1036,16 @@ export default async function oemRoutes(app: FastifyInstance) {
         }
       }
     });
-    if (!orgWithRoots.rsaRootCertPem || !orgWithRoots.rsaRootKeyPem || !orgWithRoots.ecdsaRootCertPem || !orgWithRoots.ecdsaRootKeyPem) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "OEM roots not initialized"));
-      return;
-    }
     const xml = await generateKeyboxXmlWithDualRoots(
       {
-        rootCertPem: orgWithRoots.rsaRootCertPem,
-        rootPrivateKeyPem: orgWithRoots.rsaRootKeyPem
+        issuerCertPem: orgWithRoots.rsaRootCertPem,
+        issuerPrivateKeyPem: orgWithRoots.rsaRootKeyPem,
+        rootCertPem: rsaRootCert
       },
       {
-        rootCertPem: orgWithRoots.ecdsaRootCertPem,
-        rootPrivateKeyPem: orgWithRoots.ecdsaRootKeyPem
+        issuerCertPem: orgWithRoots.ecdsaRootCertPem,
+        issuerPrivateKeyPem: orgWithRoots.ecdsaRootKeyPem,
+        rootCertPem: ecdsaRootCert
       },
       deviceId,
       rsaSerialHex,
