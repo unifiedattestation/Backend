@@ -24,8 +24,12 @@ export default function Dashboard() {
   const [appName, setAppName] = useState("");
   const [projectId, setProjectId] = useState("");
   const [signerDigest, setSignerDigest] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editProjectId, setEditProjectId] = useState("");
+  const [editSigner, setEditSigner] = useState("");
   const [reports, setReports] = useState<DeviceReport[]>([]);
   const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [appMessage, setAppMessage] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -98,6 +102,7 @@ export default function Dashboard() {
       setProjectId("");
       setSignerDigest("");
       setNewSecret(data.apiSecret);
+      setAppMessage(null);
       fetchApps();
     }
   };
@@ -111,6 +116,48 @@ export default function Dashboard() {
     if (res.ok) {
       const data = await res.json();
       setNewSecret(data.apiSecret);
+    }
+  };
+
+  const updateApp = async () => {
+    if (!access || !selectedApp) return;
+    const res = await fetch(`${backendUrl}/api/v1/apps/${selectedApp.id}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: editName,
+        projectId: editProjectId,
+        signerDigestSha256: editSigner
+      })
+    });
+    if (res.ok) {
+      fetchApps();
+      setNewSecret(null);
+      setAppMessage("App updated.");
+    } else {
+      const raw = await res.text();
+      setAppMessage(raw || "Update failed");
+    }
+  };
+
+  const deleteApp = async () => {
+    if (!access || !selectedApp) return;
+    if (!confirm("Delete this app and all its reports?")) return;
+    const res = await fetch(`${backendUrl}/api/v1/apps/${selectedApp.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      setSelectedApp(null);
+      setReports([]);
+      fetchApps();
+      setAppMessage("App deleted.");
+    } else {
+      const raw = await res.text();
+      setAppMessage(raw || "Delete failed");
     }
   };
 
@@ -163,6 +210,10 @@ export default function Dashboard() {
                 }`}
                 onClick={() => {
                   setSelectedApp(app);
+                  setEditName(app.name);
+                  setEditProjectId(app.projectId);
+                  setEditSigner(app.signerDigestSha256);
+                  setAppMessage(null);
                   fetchReports(app.id);
                   setNewSecret(null);
                 }}
@@ -202,7 +253,63 @@ export default function Dashboard() {
             </button>
           </div>
         </section>
+        <section className="bg-white/70 rounded-2xl p-6 shadow-sm">
+          <h2 className="text-xl font-semibold">Edit App</h2>
+          {!selectedApp ? (
+            <div className="text-sm text-gray-600 mt-3">Select an app to edit.</div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <input
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                placeholder="App name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+              <input
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                placeholder="Project ID (package name)"
+                value={editProjectId}
+                onChange={(e) => setEditProjectId(e.target.value)}
+              />
+              <input
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                placeholder="Signing cert SHA-256 (hex)"
+                value={editSigner}
+                onChange={(e) => setEditSigner(e.target.value)}
+              />
+              <div className="flex gap-3">
+                <button className="flex-1 rounded-lg bg-ink text-white py-2" onClick={updateApp}>
+                  Save
+                </button>
+                <button
+                  className="flex-1 rounded-lg border border-red-500 text-red-600 py-2"
+                  onClick={deleteApp}
+                >
+                  Delete
+                </button>
+              </div>
+              {appMessage && <div className="text-sm text-gray-700">{appMessage}</div>}
+            </div>
+          )}
+        </section>
       </div>
+
+      {selectedApp && (
+        <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">App Server Secret</h2>
+            <button className="rounded-lg bg-clay text-white px-4 py-2" onClick={rotateSecret}>
+              Rotate Secret
+            </button>
+          </div>
+          {newSecret && (
+            <div className="mt-4 rounded-lg bg-ink text-white p-4 text-sm">
+              <p className="font-semibold">Copy your API secret now:</p>
+              <code className="block mt-2 break-all">{newSecret}</code>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
         <h2 className="text-xl font-semibold">Profile</h2>
@@ -251,23 +358,6 @@ export default function Dashboard() {
           ))}
         </div>
       </section>
-
-      {selectedApp && (
-        <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">App Server Secret</h2>
-            <button className="rounded-lg bg-clay text-white px-4 py-2" onClick={rotateSecret}>
-              Rotate Secret
-            </button>
-          </div>
-          {newSecret && (
-            <div className="mt-4 rounded-lg bg-ink text-white p-4 text-sm">
-              <p className="font-semibold">Copy your API secret now:</p>
-              <code className="block mt-2 break-all">{newSecret}</code>
-            </div>
-          )}
-        </section>
-      )}
 
       {selectedApp && (
         <section className="mt-8 bg-white/70 rounded-2xl p-6 shadow-sm">

@@ -110,6 +110,83 @@ export default async function appManagementRoutes(app: FastifyInstance) {
     }
   );
 
+  app.patch("/:appId", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "app_dev" && user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "App dev role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { appId } = request.params as { appId: string };
+    const body = request.body as {
+      name?: string;
+      projectId?: string;
+      signerDigestSha256?: string;
+    };
+    const appRecord = await prisma.app.findFirst({
+      where: user.role === "admin" ? { id: appId } : { id: appId, ownerUserId: user.sub as string }
+    });
+    if (!appRecord) {
+      reply.code(404).send(errorResponse("APP_NOT_FOUND", "App not found"));
+      return;
+    }
+    const nextName = body.name?.trim();
+    const nextProjectId = body.projectId?.trim();
+    const nextSigner = body.signerDigestSha256?.trim();
+    if (!nextName && !nextProjectId && !nextSigner) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "No updates provided"));
+      return;
+    }
+    if (nextProjectId && nextProjectId !== appRecord.projectId) {
+      const existing = await prisma.app.findUnique({ where: { projectId: nextProjectId } });
+      if (existing) {
+        reply.code(409).send(errorResponse("PROJECT_EXISTS", "projectId already registered"));
+        return;
+      }
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.app.update({
+        where: { id: appRecord.id },
+        data: {
+          name: nextName || appRecord.name,
+          projectId: nextProjectId || appRecord.projectId,
+          signerDigestSha256: nextSigner
+            ? nextSigner.toLowerCase()
+            : appRecord.signerDigestSha256
+        }
+      });
+      if (nextProjectId && nextProjectId !== appRecord.projectId) {
+        await tx.deviceReport.updateMany({
+          where: { projectId: appRecord.projectId },
+          data: { projectId: nextProjectId }
+        });
+      }
+    });
+    reply.send({ ok: true });
+  });
+
+  app.delete("/:appId", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "app_dev" && user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "App dev role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { appId } = request.params as { appId: string };
+    const appRecord = await prisma.app.findFirst({
+      where: user.role === "admin" ? { id: appId } : { id: appId, ownerUserId: user.sub as string }
+    });
+    if (!appRecord) {
+      reply.code(404).send(errorResponse("APP_NOT_FOUND", "App not found"));
+      return;
+    }
+    await prisma.$transaction([
+      prisma.deviceReport.deleteMany({ where: { projectId: appRecord.projectId } }),
+      prisma.app.delete({ where: { id: appRecord.id } })
+    ]);
+    reply.send({ ok: true });
+  });
+
   app.get("/:appId/reports", async (request, reply) => {
     const user = requireUser(request);
     if (user.role !== "app_dev" && user.role !== "admin") {
