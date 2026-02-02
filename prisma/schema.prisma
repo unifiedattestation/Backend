@@ -138,7 +138,6 @@ model AttestationRoot {
   createdAt     DateTime             @default(now())
   authority     AttestationAuthority @relation(fields: [authorityId], references: [id])
   oemOrg        OemOrg?              @relation(fields: [oemOrgId], references: [id])
-  deviceEntries DeviceEntryRoot[]    @relation("DeviceEntryRootToAttestationRoot")
   backendRoot   BackendRootAnchor?   @relation(fields: [backendRootId], references: [id])
 }
 
@@ -181,24 +180,6 @@ model DeviceEntry {
   authority                  AttestationAuthority @relation(fields: [authorityId], references: [id])
   oemOrg                     OemOrg               @relation(fields: [oemOrgId], references: [id])
   deviceFamily               DeviceFamily         @relation(fields: [deviceFamilyId], references: [id])
-  roots                      DeviceEntryRoot[]
-}
-
-enum RootAlgorithm {
-  rsa
-  ecdsa
-}
-
-model DeviceEntryRoot {
-  id            String          @id @default(cuid())
-  deviceEntryId String
-  rootId        String
-  algorithm     RootAlgorithm
-  createdAt     DateTime        @default(now())
-  deviceEntry   DeviceEntry     @relation(fields: [deviceEntryId], references: [id], onDelete: Cascade)
-  root          AttestationRoot @relation("DeviceEntryRootToAttestationRoot", fields: [rootId], references: [id])
-
-  @@unique([deviceEntryId, rootId, algorithm], name: "deviceEntryId_rootId_algorithm")
 }
 
 model AuditLog {

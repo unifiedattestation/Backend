@@ -239,8 +239,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           revokedAt: null
         },
         include: {
-          authority: true,
-          roots: { include: { root: true } },
+          authority: { include: { roots: true } },
           deviceFamily: true
         }
       });
@@ -268,12 +267,13 @@ export default async function deviceRoutes(app: FastifyInstance) {
         reply.code(400).send(errorResponse("POLICY_FAIL", "Device disabled"));
         return;
       }
-      if (!anchorEntry.roots || anchorEntry.roots.length === 0) {
+      const authorityRoots = anchorEntry.authority.roots || [];
+      if (authorityRoots.length === 0) {
         request.log.warn(
           { leafSerial, authorityId: anchorEntry.authorityId },
-          "device.process missing selected roots"
+          "device.process missing authority roots"
         );
-        reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "No selected root for device"));
+        reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "Authority missing roots"));
         return;
       }
       const chainSerials = chain.map((cert) =>
@@ -310,9 +310,9 @@ export default async function deviceRoutes(app: FastifyInstance) {
       try {
         const chainRoot = new crypto.X509Certificate(chain[chain.length - 1]);
         const chainRootSpki = chainRoot.publicKey.export({ type: "spki", format: "der" }) as Buffer;
-        const selectedRoot = anchorEntry.roots.find((entry) => {
+        const selectedRoot = authorityRoots.find((entry) => {
           try {
-            const cert = new crypto.X509Certificate(entry.root.pem);
+            const cert = new crypto.X509Certificate(entry.pem);
             const rootSpki = cert.publicKey.export({ type: "spki", format: "der" }) as Buffer;
             return rootSpki.equals(chainRootSpki);
           } catch {
@@ -327,7 +327,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           reply.code(400).send(errorResponse("UNTRUSTED_ROOT", "Selected root not available"));
           return;
         }
-        const selectedRootCert = new crypto.X509Certificate(selectedRoot.root.pem);
+        const selectedRootCert = new crypto.X509Certificate(selectedRoot.pem);
         request.log.info(
           {
             leafSerial,
@@ -339,10 +339,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
           },
           "device.process root comparison"
         );
-        verifyCertificateChainStrict(
-          chain,
-          anchorEntry.roots.map((entry) => entry.root.pem)
-        );
+        verifyCertificateChainStrict(chain, authorityRoots.map((entry) => entry.pem));
       } catch (error) {
         request.log.error({ err: error, leafSerial }, "device.process chain verification failed");
         reply.code(400).send(errorResponse("INVALID_CHAIN", "Attestation chain validation failed"));

@@ -349,13 +349,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       where: { backendRootId: id, revokedAt: null },
       data: { revokedAt: new Date() }
     });
-    const deviceEntryRoots = await prisma.deviceEntryRoot.findMany({
-      where: { root: { backendRootId: id } },
-      select: { deviceEntryId: true }
+    const localAuthorities = await prisma.attestationAuthority.findMany({
+      where: { isLocal: true },
+      select: { id: true }
     });
-    if (deviceEntryRoots.length > 0) {
+    if (localAuthorities.length > 0) {
       await prisma.deviceEntry.updateMany({
-        where: { id: { in: deviceEntryRoots.map((entry) => entry.deviceEntryId) } },
+        where: { authorityId: { in: localAuthorities.map((entry) => entry.id) }, revokedAt: null },
         data: { revokedAt: new Date() }
       });
     }
@@ -390,9 +390,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       select: { id: true }
     });
     if (rootIds.length > 0) {
-      await prisma.deviceEntryRoot.deleteMany({
-        where: { rootId: { in: rootIds.map((entry) => entry.id) } }
-      });
       await prisma.attestationRoot.deleteMany({
         where: { id: { in: rootIds.map((entry) => entry.id) } }
       });

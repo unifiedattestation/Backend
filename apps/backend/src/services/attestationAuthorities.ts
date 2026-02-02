@@ -106,12 +106,17 @@ export async function refreshAuthorityBundle(authorityId: string, baseUrl: strin
   }
   const rootPayload = (await rootRes.json()) as { roots?: string[] } | string[];
   const roots = Array.isArray(rootPayload) ? rootPayload : rootPayload.roots || [];
-  await prisma.attestationRoot.deleteMany({ where: { authorityId } });
+  await prisma.attestationRoot.deleteMany({
+    where: { authorityId, oemOrgId: null }
+  });
   await prisma.attestationRoot.createMany({
-    data: roots.map((pem) => ({
-      authorityId,
-      pem
-    }))
+    data: roots
+      .map((pem) => pem.trim())
+      .filter((pem) => pem.length > 0)
+      .map((pem) => ({
+        authorityId,
+        pem
+      }))
   });
   await getAuthorityStatus(authorityId, baseUrl);
 }

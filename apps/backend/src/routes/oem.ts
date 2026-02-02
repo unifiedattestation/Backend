@@ -649,7 +649,7 @@ export default async function oemRoutes(app: FastifyInstance) {
         oemOrgId: org.id,
         deviceFamilyId: deviceFamilyId || undefined
       },
-      include: { authority: true, roots: { include: { root: true } }, deviceFamily: true },
+      include: { authority: true, deviceFamily: true },
       orderBy: { createdAt: "desc" }
     });
     const response = anchors.map((anchor) => ({
@@ -663,7 +663,6 @@ export default async function oemRoutes(app: FastifyInstance) {
       authorityName: anchor.authority.name,
       deviceFamilyId: anchor.deviceFamilyId,
       deviceCodename: anchor.deviceFamily.codename,
-      rootAlgorithms: anchor.roots.map((entry) => entry.algorithm),
       createdAt: anchor.createdAt
     }));
     reply.send(response);
@@ -722,16 +721,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       return;
     }
     const roots = authority.roots.filter((root) => !root.oemOrgId || root.oemOrgId === org.id);
-    const rootBindings = roots
-      .map((root) => {
-        const algorithm = getRootAlgorithm(root.pem);
-        if (!algorithm) {
-          return null;
-        }
-        return { rootId: root.id, algorithm };
-      })
-      .filter((entry): entry is { rootId: string; algorithm: "rsa" | "ecdsa" } => Boolean(entry));
-    if (rootBindings.length === 0) {
+    if (roots.length === 0) {
       reply.code(400).send(errorResponse("INVALID_REQUEST", "Authority missing usable roots"));
       return;
     }
@@ -749,12 +739,7 @@ export default async function oemRoutes(app: FastifyInstance) {
           ecdsaSerialHex: ecdsaSerial,
           rsaIntermediateSerialHex: rsaIntermediateSerial,
           ecdsaIntermediateSerialHex: ecdsaIntermediateSerial,
-          deviceId: deviceFamily.codename,
-          roots: {
-            createMany: {
-              data: rootBindings
-            }
-          }
+          deviceId: deviceFamily.codename
         }
       });
       reply.send(created);
@@ -810,10 +795,7 @@ export default async function oemRoutes(app: FastifyInstance) {
       reply.code(404).send(errorResponse("NOT_FOUND", "Anchor not found"));
       return;
     }
-    await prisma.$transaction([
-      prisma.deviceEntryRoot.deleteMany({ where: { deviceEntryId: id } }),
-      prisma.deviceEntry.delete({ where: { id } })
-    ]);
+    await prisma.deviceEntry.delete({ where: { id } });
     reply.send({ ok: true });
   });
 
@@ -867,19 +849,6 @@ export default async function oemRoutes(app: FastifyInstance) {
       reply.code(400).send(errorResponse("INVALID_REQUEST", "OEM roots not available"));
       return;
     }
-    const rootBindings = authorityRoots
-      .map((root) => {
-        const algorithm = getRootAlgorithm(root.pem);
-        if (!algorithm) {
-          return null;
-        }
-        return { rootId: root.id, algorithm };
-      })
-      .filter((entry): entry is { rootId: string; algorithm: "rsa" | "ecdsa" } => Boolean(entry));
-    if (rootBindings.length === 0) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Authority missing usable roots"));
-      return;
-    }
     const rsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
     const ecdsaSerialHex = crypto.randomBytes(16).toString("hex").toUpperCase();
     const deviceId = deviceFamily.codename || `UA_${Date.now()}`;
@@ -898,12 +867,7 @@ export default async function oemRoutes(app: FastifyInstance) {
         ecdsaSerialHex,
         rsaIntermediateSerialHex,
         ecdsaIntermediateSerialHex,
-        deviceId,
-        roots: {
-          createMany: {
-            data: rootBindings
-          }
-        }
+        deviceId
       }
     });
     await prisma.auditLog.create({

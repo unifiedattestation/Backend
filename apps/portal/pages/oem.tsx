@@ -52,7 +52,6 @@ type DeviceEntry = {
   ecdsaIntermediateSerialHex?: string | null;
   revokedAt?: string | null;
   authorityName: string;
-  rootAlgorithms?: string[];
   deviceCodename?: string | null;
   createdAt: string;
 };

@@ -68,6 +68,7 @@ export default function AdminPage() {
   const [passwordUpdates, setPasswordUpdates] = useState<Record<string, string>>({});
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [backendRootError, setBackendRootError] = useState<string | null>(null);
+  const [authorityNotice, setAuthorityNotice] = useState<Record<string, string>>({});
 
   const access = typeof window !== "undefined" ? localStorage.getItem("ua_access") : null;
 
@@ -222,11 +223,18 @@ export default function AdminPage() {
 
   const refreshAuthority = async (id: string) => {
     if (!access) return;
-    await fetch(`${backendUrl}/api/v1/admin/attestation-authorities/${id}/refresh`, {
+    setAuthorityNotice((prev) => ({ ...prev, [id]: "Refreshing..." }));
+    const res = await fetch(`${backendUrl}/api/v1/admin/attestation-authorities/${id}/refresh`, {
       method: "POST",
       headers: { Authorization: `Bearer ${access}` }
     });
-    fetchAll();
+    if (res.ok) {
+      setAuthorityNotice((prev) => ({ ...prev, [id]: "Refreshed successfully." }));
+      fetchAll();
+      return;
+    }
+    const raw = await res.text();
+    setAuthorityNotice((prev) => ({ ...prev, [id]: raw || "Refresh failed." }));
   };
 
   const generateBackendRoot = async () => {
@@ -460,6 +468,11 @@ export default function AdminPage() {
                   <div className="text-xs text-gray-500">
                     Status cached: {authority.statusCachedAt ? new Date(authority.statusCachedAt).toLocaleString() : "never"}
                   </div>
+                  {authorityNotice[authority.id] && (
+                    <div className={`text-xs ${authorityNotice[authority.id].startsWith("Refreshed") ? "text-green-600" : "text-red-600"}`}>
+                      {authorityNotice[authority.id]}
+                    </div>
+                  )}
                 </div>
                 <button
                   className="rounded-lg bg-moss text-white px-3 py-2 text-xs"
