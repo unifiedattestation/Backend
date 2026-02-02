@@ -59,11 +59,16 @@ export default async function appManagementRoutes(app: FastifyInstance) {
       }
       const prisma = getPrisma();
       const body = CreateAppRequestSchema.parse(request.body);
+      const projectId = body.projectId ?? body.packageName;
+      if (!projectId) {
+        reply.code(400).send(errorResponse("INVALID_REQUEST", "projectId required"));
+        return;
+      }
       const secret = generateApiSecret();
       const created = await prisma.app.create({
         data: {
           name: body.name,
-          projectId: body.projectId,
+          projectId,
           signerDigestSha256: body.signerDigestSha256.toLowerCase(),
           apiSecretHash: secret.hash,
           apiSecretPrefix: secret.prefix,

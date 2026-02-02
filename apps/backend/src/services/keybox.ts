@@ -1,7 +1,5 @@
 import crypto from "crypto";
-import fs from "fs";
 import type * as x509Types from "@peculiar/x509";
-import { Config } from "../lib/config";
 
 type UaProvisioningMaterial = {
   issuerCertPem: string;
@@ -14,12 +12,6 @@ type GeneratedKey = {
   privateKeyPem: string;
   certificateChainPem: string[];
 };
-
-function readPemFile(pathname?: string): string | undefined {
-  if (!pathname) return undefined;
-  const content = fs.readFileSync(pathname, "utf8");
-  return content.trim();
-}
 
 function randomSerialHex(): string {
   const bytes = crypto.randomBytes(16);
@@ -155,33 +147,6 @@ function buildKeyXml(entry: GeneratedKey): string {
   return `<Key algorithm="${entry.algorithm}"><PrivateKey format="pem">${wrapPemBlock(
     entry.privateKeyPem
   )}</PrivateKey><CertificateChain><NumberOfCertificates>${entry.certificateChainPem.length}</NumberOfCertificates>${certsXml}</CertificateChain></Key>`;
-}
-
-export async function generateKeyboxXml(
-  config: Config,
-  deviceId: string,
-  includeRsa: boolean,
-  includeEcdsa: boolean,
-  rsaSerialHex?: string,
-  ecdsaSerialHex?: string
-): Promise<string> {
-  if (!includeRsa || !includeEcdsa) {
-    throw new Error("Keybox must include both RSA and ECDSA keys");
-  }
-  const rsaCert = readPemFile(config.ua_root_rsa_cert_path);
-  const rsaKey = readPemFile(config.ua_root_rsa_private_key_path);
-  const ecdsaCert = readPemFile(config.ua_root_ecdsa_cert_path);
-  const ecdsaKey = readPemFile(config.ua_root_ecdsa_private_key_path);
-  if (!rsaCert || !rsaKey || !ecdsaCert || !ecdsaKey) {
-    throw new Error("UA root cert/private key paths are not configured");
-  }
-  return generateKeyboxXmlWithDualRoots(
-    { issuerCertPem: rsaCert, issuerPrivateKeyPem: rsaKey, rootCertPem: rsaCert },
-    { issuerCertPem: ecdsaCert, issuerPrivateKeyPem: ecdsaKey, rootCertPem: ecdsaCert },
-    deviceId,
-    rsaSerialHex || randomSerialHex(),
-    ecdsaSerialHex || randomSerialHex()
-  );
 }
 
 export async function generateKeyboxXmlWithDualRoots(

@@ -10,8 +10,12 @@ export const AppSchema = z.object({
 
 export const CreateAppRequestSchema = z.object({
   name: z.string().min(1),
-  projectId: z.string().min(1),
+  projectId: z.string().min(1).optional(),
+  packageName: z.string().min(1).optional(),
   signerDigestSha256: z.string().min(1)
+}).refine((data) => data.projectId || data.packageName, {
+  message: "projectId is required",
+  path: ["projectId"]
 });
 
 export const CreateAppSecretResponseSchema = z.object({

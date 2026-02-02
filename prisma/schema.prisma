@@ -19,150 +19,169 @@ enum FederationStatus {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String     @id @default(cuid())
+  email        String     @unique
   passwordHash String
   role         UserRole
   disabledAt   DateTime?
   displayName  String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime   @default(now())
   apps         App[]
-  oemOrg       OemOrg? @relation("OemOrgMembers", fields: [oemOrgId], references: [id])
+  oemOrg       OemOrg?    @relation("OemOrgMembers", fields: [oemOrgId], references: [id])
   oemOrgId     String?
-  ownedOemOrg  OemOrg? @relation("OemOrgOwner")
+  ownedOemOrg  OemOrg?    @relation("OemOrgOwner")
   auditLogs    AuditLog[]
 }
 
 model App {
-  id                 String   @id @default(cuid())
-  projectId          String   @unique
+  id                 String         @id @default(cuid())
+  projectId          String         @unique
   name               String
   signerDigestSha256 String
   apiSecretHash      String
   apiSecretPrefix    String
-  createdAt          DateTime @default(now())
+  createdAt          DateTime       @default(now())
   ownerUserId        String
-  ownerUser          User     @relation(fields: [ownerUserId], references: [id])
+  ownerUser          User           @relation(fields: [ownerUserId], references: [id])
   reports            DeviceReport[]
 }
 
 model DeviceReport {
-  id              String   @id @default(cuid())
-  appId           String?
-  projectId       String
-  scopedDeviceId  String
-  issuerBackendId String
-  deviceFamilyId  String?
-  buildPolicyId   String?
+  id               String        @id @default(cuid())
+  appId            String?
+  projectId        String
+  scopedDeviceId   String
+  issuerBackendId  String
+  deviceFamilyId   String?
+  buildPolicyId    String?
   buildFingerprint String?
-  lastSeen        DateTime
-  lastVerdict     Json
-  lastState       Json
-  app             App?     @relation(fields: [appId], references: [id])
-  deviceFamily    DeviceFamily? @relation(fields: [deviceFamilyId], references: [id])
-  buildPolicy     BuildPolicy? @relation(fields: [buildPolicyId], references: [id])
+  lastSeen         DateTime
+  lastVerdict      Json
+  lastState        Json
+  app              App?          @relation(fields: [appId], references: [id])
+  deviceFamily     DeviceFamily? @relation(fields: [deviceFamilyId], references: [id])
+  buildPolicy      BuildPolicy?  @relation(fields: [buildPolicyId], references: [id])
 
   @@unique([projectId, scopedDeviceId], name: "projectId_scopedDeviceId")
 }
 
 model OemOrg {
-  id           String   @id @default(cuid())
-  name         String
-  ownerUserId  String   @unique
-  ownerUser    User     @relation("OemOrgOwner", fields: [ownerUserId], references: [id])
-  manufacturer String?
-  brand        String?
-  rsaRootCertPem String?
-  rsaRootKeyPem  String?
+  id               String            @id @default(cuid())
+  name             String
+  ownerUserId      String            @unique
+  ownerUser        User              @relation("OemOrgOwner", fields: [ownerUserId], references: [id])
+  manufacturer     String?
+  brand            String?
+  rsaRootCertPem   String?
+  rsaRootKeyPem    String?
   ecdsaRootCertPem String?
   ecdsaRootKeyPem  String?
-  createdAt    DateTime @default(now())
-  users        User[]   @relation("OemOrgMembers")
-  deviceFamilies DeviceFamily[]
-  deviceEntries DeviceEntry[]
+  createdAt        DateTime          @default(now())
+  users            User[]            @relation("OemOrgMembers")
+  deviceFamilies   DeviceFamily[]
+  deviceEntries    DeviceEntry[]
   attestationRoots AttestationRoot[]
-  trustAnchors OemTrustAnchor[]
+  trustAnchors     OemTrustAnchor[]
 }
 
 model OemTrustAnchor {
-  id           String   @id @default(cuid())
-  oemOrgId     String
-  rsaCertPem   String
-  rsaKeyPem    String
-  rsaSerialHex String
-  ecdsaCertPem String
-  ecdsaKeyPem  String
+  id             String             @id @default(cuid())
+  oemOrgId       String
+  backendRootId  String?
+  rsaCertPem     String
+  rsaKeyPem      String
+  rsaSerialHex   String
+  ecdsaCertPem   String
+  ecdsaKeyPem    String
   ecdsaSerialHex String
-  createdAt    DateTime @default(now())
-  revokedAt    DateTime?
-  oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
+  createdAt      DateTime           @default(now())
+  revokedAt      DateTime?
+  oemOrg         OemOrg             @relation(fields: [oemOrgId], references: [id])
+  backendRoot    BackendRootAnchor? @relation(fields: [backendRootId], references: [id])
 }
 
 model DeviceFamily {
-  id                  String   @id @default(cuid())
-  oemOrgId            String
-  name                String
-  codename            String?
-  model               String?
-  manufacturer        String?
-  brand               String?
-  enabled             Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  oemOrg              OemOrg   @relation(fields: [oemOrgId], references: [id])
-  buildPolicies       BuildPolicy[]
-  reports             DeviceReport[]
-  deviceEntries       DeviceEntry[]
+  id            String         @id @default(cuid())
+  oemOrgId      String
+  name          String
+  codename      String?
+  model         String?
+  manufacturer  String?
+  brand         String?
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  oemOrg        OemOrg         @relation(fields: [oemOrgId], references: [id])
+  buildPolicies BuildPolicy[]
+  reports       DeviceReport[]
+  deviceEntries DeviceEntry[]
 }
 
 model AttestationAuthority {
-  id        String   @id @default(cuid())
+  id        String                  @id @default(cuid())
   name      String
   baseUrl   String
-  enabled   Boolean  @default(true)
-  isLocal   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  enabled   Boolean                 @default(true)
+  isLocal   Boolean                 @default(false)
+  createdAt DateTime                @default(now())
   roots     AttestationRoot[]
   status    AttestationStatusCache?
   devices   DeviceEntry[]
 }
 
 model AttestationRoot {
-  id           String   @id @default(cuid())
-  authorityId  String
-  oemOrgId     String?
-  name         String?
-  pem          String
-  createdAt    DateTime @default(now())
-  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
-  oemOrg       OemOrg? @relation(fields: [oemOrgId], references: [id])
-  deviceEntries DeviceEntryRoot[]
+  id            String               @id @default(cuid())
+  authorityId   String
+  oemOrgId      String?
+  backendRootId String?
+  name          String?
+  pem           String
+  createdAt     DateTime             @default(now())
+  authority     AttestationAuthority @relation(fields: [authorityId], references: [id])
+  oemOrg        OemOrg?              @relation(fields: [oemOrgId], references: [id])
+  deviceEntries DeviceEntryRoot[]    @relation("DeviceEntryRootToAttestationRoot")
+  backendRoot   BackendRootAnchor?   @relation(fields: [backendRootId], references: [id])
+}
+
+model BackendRootAnchor {
+  id               String            @id @default(cuid())
+  name             String?
+  rsaCertPem       String
+  rsaKeyPem        String
+  rsaSerialHex     String
+  ecdsaCertPem     String
+  ecdsaKeyPem      String
+  ecdsaSerialHex   String
+  createdAt        DateTime          @default(now())
+  revokedAt        DateTime?
+  attestationRoots AttestationRoot[]
+  oemTrustAnchors  OemTrustAnchor[]
 }
 
 model AttestationStatusCache {
-  id           String   @id @default(cuid())
-  authorityId  String   @unique
-  revokedSerials Json
+  id               String               @id @default(cuid())
+  authorityId      String               @unique
+  revokedSerials   Json
   suspendedSerials Json
-  fetchedAt    DateTime @default(now())
-  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
+  fetchedAt        DateTime             @default(now())
+  authority        AttestationAuthority @relation(fields: [authorityId], references: [id])
 }
 
 model DeviceEntry {
-  id           String   @id @default(cuid())
-  authorityId  String
-  oemOrgId     String
-  deviceFamilyId String
-  deviceId     String?
-  rsaSerialHex   String   @unique
-  ecdsaSerialHex String   @unique
-  rsaIntermediateSerialHex String?
+  id                         String               @id @default(cuid())
+  authorityId                String
+  oemOrgId                   String
+  deviceFamilyId             String
+  deviceId                   String?
+  rsaSerialHex               String               @unique
+  ecdsaSerialHex             String               @unique
+  rsaIntermediateSerialHex   String?
   ecdsaIntermediateSerialHex String?
-  revokedAt    DateTime?
-  createdAt    DateTime @default(now())
-  authority    AttestationAuthority @relation(fields: [authorityId], references: [id])
-  oemOrg       OemOrg @relation(fields: [oemOrgId], references: [id])
-  deviceFamily DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
-  roots        DeviceEntryRoot[]
+  revokedAt                  DateTime?
+  createdAt                  DateTime             @default(now())
+  authority                  AttestationAuthority @relation(fields: [authorityId], references: [id])
+  oemOrg                     OemOrg               @relation(fields: [oemOrgId], references: [id])
+  deviceFamily               DeviceFamily         @relation(fields: [deviceFamilyId], references: [id])
+  roots                      DeviceEntryRoot[]
 }
 
 enum RootAlgorithm {
@@ -171,13 +190,13 @@ enum RootAlgorithm {
 }
 
 model DeviceEntryRoot {
-  id            String   @id @default(cuid())
+  id            String          @id @default(cuid())
   deviceEntryId String
   rootId        String
   algorithm     RootAlgorithm
-  createdAt     DateTime @default(now())
-  deviceEntry   DeviceEntry @relation(fields: [deviceEntryId], references: [id])
-  root          AttestationRoot @relation(fields: [rootId], references: [id])
+  createdAt     DateTime        @default(now())
+  deviceEntry   DeviceEntry     @relation(fields: [deviceEntryId], references: [id], onDelete: Cascade)
+  root          AttestationRoot @relation("DeviceEntryRootToAttestationRoot", fields: [rootId], references: [id])
 
   @@unique([deviceEntryId, rootId, algorithm], name: "deviceEntryId_rootId_algorithm")
 }
@@ -192,25 +211,25 @@ model AuditLog {
 }
 
 model BuildPolicy {
-  id                      String   @id @default(cuid())
-  deviceFamilyId          String
-  buildFingerprint        String
-  verifiedBootKeyHex      String
-  verifiedBootHashHex     String?
-  osVersionRaw            Int?
-  minOsPatchLevelRaw      Int?
-  enabled                 Boolean @default(true)
-  createdAt               DateTime @default(now())
-  deviceFamily            DeviceFamily @relation(fields: [deviceFamilyId], references: [id])
-  reports                 DeviceReport[]
+  id                  String         @id @default(cuid())
+  deviceFamilyId      String
+  buildFingerprint    String
+  verifiedBootKeyHex  String
+  verifiedBootHashHex String?
+  osVersionRaw        Int?
+  minOsPatchLevelRaw  Int?
+  enabled             Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  deviceFamily        DeviceFamily   @relation(fields: [deviceFamilyId], references: [id])
+  reports             DeviceReport[]
 }
 
 model FederationBackend {
-  id         String   @id @default(cuid())
-  backendId  String   @unique
+  id         String           @id @default(cuid())
+  backendId  String           @unique
   name       String
   url        String?
   publicKeys Json
   status     FederationStatus
-  createdAt  DateTime @default(now())
+  createdAt  DateTime         @default(now())
 }

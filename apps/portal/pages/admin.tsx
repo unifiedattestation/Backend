@@ -23,6 +23,17 @@ type Settings = {
   activeKid: string;
 };
 
+type BackendRootAnchor = {
+  id: string;
+  name?: string | null;
+  rsaSerialHex: string;
+  ecdsaSerialHex: string;
+  rsaSubject: string;
+  ecdsaSubject: string;
+  createdAt: string;
+  revokedAt?: string | null;
+};
+
 type AuthorityRoot = {
   id: string;
   name?: string | null;
@@ -46,6 +57,7 @@ export default function AdminPage() {
   const [backends, setBackends] = useState<Backend[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [backendRoots, setBackendRoots] = useState<BackendRootAnchor[]>([]);
   const [authorities, setAuthorities] = useState<Authority[]>([]);
   const [newUser, setNewUser] = useState({ email: "", password: "", role: "app_dev" });
   const [newBackendUrl, setNewBackendUrl] = useState("");
@@ -55,12 +67,13 @@ export default function AdminPage() {
   const [userError, setUserError] = useState<string | null>(null);
   const [passwordUpdates, setPasswordUpdates] = useState<Record<string, string>>({});
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [backendRootError, setBackendRootError] = useState<string | null>(null);
 
   const access = typeof window !== "undefined" ? localStorage.getItem("ua_access") : null;
 
   const fetchAll = async () => {
     if (!access) return;
-    const [backendRes, userRes, settingsRes, authorityRes] = await Promise.all([
+    const [backendRes, userRes, settingsRes, authorityRes, backendRootsRes] = await Promise.all([
       fetch(`${backendUrl}/api/v1/federation/backends`),
       fetch(`${backendUrl}/api/v1/admin/users`, {
         headers: { Authorization: `Bearer ${access}` }
@@ -69,6 +82,9 @@ export default function AdminPage() {
         headers: { Authorization: `Bearer ${access}` }
       }),
       fetch(`${backendUrl}/api/v1/admin/attestation-authorities`, {
+        headers: { Authorization: `Bearer ${access}` }
+      }),
+      fetch(`${backendUrl}/api/v1/admin/backend-roots`, {
         headers: { Authorization: `Bearer ${access}` }
       })
     ]);
@@ -84,6 +100,9 @@ export default function AdminPage() {
     }
     if (authorityRes.ok) {
       setAuthorities(await authorityRes.json());
+    }
+    if (backendRootsRes.ok) {
+      setBackendRoots(await backendRootsRes.json());
     }
   };
 
@@ -210,6 +229,46 @@ export default function AdminPage() {
     fetchAll();
   };
 
+  const generateBackendRoot = async () => {
+    if (!access) return;
+    setBackendRootError(null);
+    const res = await fetch(`${backendUrl}/api/v1/admin/backend-roots/generate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      const xml = await res.text();
+      const blob = new Blob([xml], { type: "application/xml" });
+      const link = document.createElement("a");
+      link.href = window.URL.createObjectURL(blob);
+      link.download = "backend_root_anchor.xml";
+      link.click();
+      window.URL.revokeObjectURL(link.href);
+      fetchAll();
+      return;
+    }
+    const raw = await res.text();
+    setBackendRootError(raw || "Failed to generate backend root");
+  };
+
+  const revokeBackendRoot = async (id: string) => {
+    if (!access) return;
+    await fetch(`${backendUrl}/api/v1/admin/backend-roots/${id}/revoke`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    fetchAll();
+  };
+
+  const removeBackendRoot = async (id: string) => {
+    if (!access) return;
+    await fetch(`${backendUrl}/api/v1/admin/backend-roots/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    fetchAll();
+  };
+
   return (
     <Layout>
       <div className="grid lg:grid-cols-[1.2fr,1fr] gap-8">
@@ -286,6 +345,66 @@ export default function AdminPage() {
               </div>
             ))}
             {passwordMessage && <div className="text-sm text-red-600">{passwordMessage}</div>}
+          </div>
+        </section>
+        <section className="bg-white/70 rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Backend Root Anchors</h2>
+              <p className="text-sm text-gray-500">
+                Generates the backend RSA + ECDSA roots used to chain OEM and device anchors.
+              </p>
+              {backendRootError && (
+                <div className="mt-2 text-xs text-red-600">{backendRootError}</div>
+              )}
+            </div>
+            <button
+              className="rounded-lg bg-ink px-3 py-2 text-white text-sm"
+              onClick={generateBackendRoot}
+            >
+              Generate Root
+            </button>
+          </div>
+          <div className="space-y-3">
+            {backendRoots.length === 0 && (
+              <div className="text-sm text-gray-500">No backend roots yet.</div>
+            )}
+            {backendRoots.map((root) => (
+              <div key={root.id} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold">
+                      {root.name || "Backend Root"}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-600">RSA: {root.rsaSerialHex}</div>
+                    <div className="text-xs text-gray-600">ECDSA: {root.ecdsaSerialHex}</div>
+                    <div
+                      className={`mt-2 text-xs ${
+                        root.revokedAt ? "text-red-600" : "text-gray-500"
+                      }`}
+                    >
+                      Created: {new Date(root.createdAt).toLocaleString()}
+                      {root.revokedAt &&
+                        ` · Revoked: ${new Date(root.revokedAt).toLocaleString()}`}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      className="rounded-lg border border-amber-500 px-3 py-1 text-xs text-amber-700"
+                      onClick={() => revokeBackendRoot(root.id)}
+                    >
+                      Revoke
+                    </button>
+                    <button
+                      className="rounded-lg border border-red-500 px-3 py-1 text-xs text-red-600"
+                      onClick={() => removeBackendRoot(root.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
         <section className="bg-white/70 rounded-2xl p-6 shadow-sm">

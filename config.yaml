@@ -1,9 +1,5 @@
 backendId: 0191ae7b-ff5a-7b1f-9b1e-b7d1c0b7842c
 jwtSecret: dev-secret-change-me
-ua_root_rsa_cert_path: /app/root/ua_root_rsa.crt.pem
-ua_root_rsa_private_key_path: /app/root/ua_root_rsa.key.pem
-ua_root_ecdsa_cert_path: /app/root/ua_root_ecdsa.crt.pem
-ua_root_ecdsa_private_key_path: /app/root/ua_root_ecdsa.key.pem
 signingKeys:
   activeKid: k1769545071325
   keys:

@@ -1,4 +1,3 @@
-import fs from "fs";
 import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 
@@ -16,16 +15,15 @@ export default async function infoRoutes(app: FastifyInstance) {
   });
 
   app.get("/root", async () => {
-    const roots: string[] = [];
-    const rsaPath = app.config.ua_root_rsa_cert_path;
-    const ecdsaPath = app.config.ua_root_ecdsa_cert_path;
-    if (rsaPath && fs.existsSync(rsaPath)) {
-      roots.push(fs.readFileSync(rsaPath, "utf8").trim());
+    const prisma = getPrisma();
+    const active = await prisma.backendRootAnchor.findFirst({
+      where: { revokedAt: null },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!active) {
+      return [];
     }
-    if (ecdsaPath && fs.existsSync(ecdsaPath)) {
-      roots.push(fs.readFileSync(ecdsaPath, "utf8").trim());
-    }
-    return roots;
+    return [active.rsaCertPem.trim(), active.ecdsaCertPem.trim()];
   });
 
   app.get("/status", async () => {
@@ -49,9 +47,14 @@ export default async function infoRoutes(app: FastifyInstance) {
       where: { revokedAt: { not: null } },
       select: { rsaSerialHex: true, ecdsaSerialHex: true }
     });
+    const revokedBackendRoots = await prisma.backendRootAnchor.findMany({
+      where: { revokedAt: { not: null } },
+      select: { rsaSerialHex: true, ecdsaSerialHex: true }
+    });
     const revokedSerials = [
       ...revokedAnchorSerials.filter((serial): serial is string => Boolean(serial)),
-      ...revokedOemAnchors.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex])
+      ...revokedOemAnchors.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex]),
+      ...revokedBackendRoots.flatMap((entry) => [entry.rsaSerialHex, entry.ecdsaSerialHex])
     ];
     const entries: Record<string, { status: "REVOKED"; reason: "UNSPECIFIED" }> = {};
     for (const serial of revokedSerials) {

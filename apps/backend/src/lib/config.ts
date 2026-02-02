@@ -14,10 +14,6 @@ export type Config = {
   backendId: string;
   configPath: string;
   jwtSecret?: string;
-  ua_root_rsa_cert_path?: string;
-  ua_root_rsa_private_key_path?: string;
-  ua_root_ecdsa_cert_path?: string;
-  ua_root_ecdsa_private_key_path?: string;
   signingKeys: {
     activeKid: string;
     keys: SigningKey[];
@@ -77,10 +73,6 @@ export function loadConfig(): Config {
     backendId,
     jwtSecret: process.env.UA_JWT_SECRET || loaded.jwtSecret,
     configPath,
-    ua_root_rsa_cert_path: loaded.ua_root_rsa_cert_path,
-    ua_root_rsa_private_key_path: loaded.ua_root_rsa_private_key_path,
-    ua_root_ecdsa_cert_path: loaded.ua_root_ecdsa_cert_path,
-    ua_root_ecdsa_private_key_path: loaded.ua_root_ecdsa_private_key_path,
     signingKeys: {
       ...loaded.signingKeys,
       activeKid: process.env.UA_ACTIVE_KID || loaded.signingKeys.activeKid

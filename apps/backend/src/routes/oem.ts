@@ -1,12 +1,10 @@
 import crypto from "crypto";
-import fs from "fs";
-import type * as x509Types from "@peculiar/x509";
 import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
 import { errorResponse } from "../lib/errors";
 import { generateKeyboxXmlWithDualRoots } from "../services/keybox";
-import { loadConfig } from "../lib/config";
+import { generateIntermediateSignedByRoot } from "../services/rootAnchors";
 
 async function requireOemOrg(userId: string) {
   const prisma = getPrisma();
@@ -37,133 +35,30 @@ async function getLocalAuthority(prisma: ReturnType<typeof getPrisma>) {
   });
 }
 
-let x509Module: typeof x509Types | null = null;
-let x509CryptoReady = false;
-
-async function loadX509() {
-  if (!x509Module) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    x509Module = require("@peculiar/x509") as typeof x509Types;
-  }
-  if (!x509CryptoReady) {
-    if (!crypto.webcrypto) {
-      throw new Error("WebCrypto is not available for X.509 generation");
-    }
-    x509Module.X509CertificateGenerator.crypto = crypto.webcrypto;
-    x509CryptoReady = true;
-  }
-  return x509Module;
-}
-
-function toPem(label: string, der: ArrayBuffer) {
-  const b64 = Buffer.from(der).toString("base64");
-  const lines = b64.match(/.{1,64}/g) || [];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
-function readPemFile(pathname?: string): string | undefined {
-  if (!pathname) return undefined;
-  return fs.readFileSync(pathname, "utf8").trim();
-}
-
-async function importSigningKey(issuerPrivateKeyPem: string, algorithm: "rsa" | "ecdsa") {
-  const subtle = crypto.webcrypto.subtle;
-  const keyObject = crypto.createPrivateKey(issuerPrivateKeyPem);
-  const pkcs8Der = keyObject.export({ type: "pkcs8", format: "der" });
-  if (algorithm === "rsa") {
-    return subtle.importKey(
-      "pkcs8",
-      pkcs8Der,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-  }
-  return subtle.importKey("pkcs8", pkcs8Der, { name: "ECDSA", namedCurve: "P-256" }, false, [
-    "sign"
-  ]);
-}
-
-async function generateIntermediateSignedByRoot(
-  commonName: string,
-  algorithm: "rsa" | "ecdsa",
-  rootCertPem: string,
-  rootPrivateKeyPem: string
-) {
-  const {
-    X509CertificateGenerator,
-    Name,
-    BasicConstraintsExtension,
-    KeyUsagesExtension,
-    KeyUsageFlags,
-    PemConverter
-  } = await loadX509();
-  const subtle = crypto.webcrypto.subtle;
-  const algorithmParams =
-    algorithm === "rsa"
-      ? {
-          name: "RSASSA-PKCS1-v1_5",
-          modulusLength: 2048,
-          publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
-          hash: "SHA-256"
-        }
-      : {
-          name: "ECDSA",
-          namedCurve: "P-256",
-          hash: "SHA-256"
-        };
-  const keys = await subtle.generateKey(algorithmParams, true, ["sign", "verify"]);
-  const issuerCert = new crypto.X509Certificate(rootCertPem);
-  const signingKey = await importSigningKey(rootPrivateKeyPem, algorithm);
-  const serialNumber = crypto.randomBytes(16).toString("hex").toUpperCase();
-  const cert = await X509CertificateGenerator.create({
-    serialNumber,
-    subject: new Name(`C=DE, O=Unified Attestation, CN=${commonName}`),
-    issuer: new Name(issuerCert.subject),
-    notBefore: new Date(),
-    notAfter: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
-    publicKey: keys.publicKey,
-    signingKey,
-    signingAlgorithm: algorithmParams,
-    extensions: [
-      new BasicConstraintsExtension(true, 0, true),
-      new KeyUsagesExtension(KeyUsageFlags.keyCertSign | KeyUsageFlags.digitalSignature, true)
-    ]
-  });
-  const privateKeyDer = await subtle.exportKey("pkcs8", keys.privateKey);
-  const certPem =
-    PemConverter?.encode?.(cert.rawData, "CERTIFICATE")?.trim() ??
-    toPem("CERTIFICATE", cert.rawData);
-  const keyPem =
-    PemConverter?.encode?.(privateKeyDer, "PRIVATE KEY")?.trim() ??
-    toPem("PRIVATE KEY", privateKeyDer);
-  return { certPem, keyPem };
-}
-
-async function ensureBackendRoots(
-  prisma: ReturnType<typeof getPrisma>,
-  config: ReturnType<typeof loadConfig>
-) {
+async function ensureBackendRoots(prisma: ReturnType<typeof getPrisma>) {
   const localAuthority = await getLocalAuthority(prisma);
   if (!localAuthority) {
     throw new Error("Local authority not configured");
   }
-  const rsaRootCert = readPemFile(config.ua_root_rsa_cert_path);
-  const ecdsaRootCert = readPemFile(config.ua_root_ecdsa_cert_path);
-  if (!rsaRootCert || !ecdsaRootCert) {
-    throw new Error("UA root cert paths are not configured");
+  const activeRoot = await prisma.backendRootAnchor.findFirst({
+    where: { revokedAt: null },
+    orderBy: { createdAt: "desc" }
+  });
+  if (!activeRoot) {
+    throw new Error("Backend root anchor not initialized");
   }
   const existingRoots = await prisma.attestationRoot.findMany({
-    where: { authorityId: localAuthority.id, oemOrgId: null }
+    where: { authorityId: localAuthority.id, oemOrgId: null, backendRootId: activeRoot.id }
   });
-  const hasRsa = existingRoots.some((root) => root.pem.trim() === rsaRootCert.trim());
-  const hasEcdsa = existingRoots.some((root) => root.pem.trim() === ecdsaRootCert.trim());
+  const hasRsa = existingRoots.some((root) => root.pem.trim() === activeRoot.rsaCertPem.trim());
+  const hasEcdsa = existingRoots.some((root) => root.pem.trim() === activeRoot.ecdsaCertPem.trim());
   if (!hasRsa) {
     await prisma.attestationRoot.create({
       data: {
         authorityId: localAuthority.id,
         oemOrgId: null,
-        pem: rsaRootCert,
+        backendRootId: activeRoot.id,
+        pem: activeRoot.rsaCertPem,
         name: "UA Backend RSA Root"
       }
     });
@@ -173,59 +68,17 @@ async function ensureBackendRoots(
       data: {
         authorityId: localAuthority.id,
         oemOrgId: null,
-        pem: ecdsaRootCert,
+        backendRootId: activeRoot.id,
+        pem: activeRoot.ecdsaCertPem,
         name: "UA Backend ECDSA Root"
       }
     });
   }
-  return { localAuthority, rsaRootCert, ecdsaRootCert };
-}
-
-async function generateSelfSignedRoot(commonName: string, algorithm: "rsa" | "ecdsa") {
-  const {
-    X509CertificateGenerator,
-    Name,
-    BasicConstraintsExtension,
-    KeyUsagesExtension,
-    KeyUsageFlags,
-    PemConverter
-  } = await loadX509();
-  const subtle = crypto.webcrypto.subtle;
-  const algorithmParams =
-    algorithm === "rsa"
-      ? {
-          name: "RSASSA-PKCS1-v1_5",
-          modulusLength: 2048,
-          publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
-          hash: "SHA-256"
-        }
-      : {
-          name: "ECDSA",
-          namedCurve: "P-256"
-        };
-  const keys = await subtle.generateKey(algorithmParams, true, ["sign", "verify"]);
-  const serialNumber = crypto.randomBytes(16).toString("hex").toUpperCase();
-  const cert = await X509CertificateGenerator.createSelfSigned({
-    serialNumber,
-    name: new Name(`CN=${commonName}`),
-    notBefore: new Date(),
-    notAfter: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
-    keys,
-    extensions: [
-      new BasicConstraintsExtension(true, undefined, true),
-      new KeyUsagesExtension(KeyUsageFlags.keyCertSign | KeyUsageFlags.digitalSignature, true)
-    ]
-  });
-  const privateKeyDer = await subtle.exportKey("pkcs8", keys.privateKey);
-  const certPem =
-    PemConverter?.encode?.(cert.rawData, "CERTIFICATE")?.trim() ??
-    toPem("CERTIFICATE", cert.rawData);
-  const keyPem =
-    PemConverter?.encode?.(privateKeyDer, "PRIVATE KEY")?.trim() ??
-    toPem("PRIVATE KEY", privateKeyDer);
   return {
-    certPem,
-    keyPem
+    localAuthority,
+    activeRoot,
+    rsaRootCert: activeRoot.rsaCertPem,
+    ecdsaRootCert: activeRoot.ecdsaCertPem
   };
 }
 
@@ -242,26 +95,20 @@ async function loadOemTrustAnchor(prisma: ReturnType<typeof getPrisma>, org: { i
 
 async function generateOemTrustAnchor(
   prisma: ReturnType<typeof getPrisma>,
-  org: { id: string; name: string },
-  config: ReturnType<typeof loadConfig>
+  org: { id: string; name: string }
 ) {
-  const { rsaRootCert, ecdsaRootCert } = await ensureBackendRoots(prisma, config);
-  const rsaRootKey = readPemFile(config.ua_root_rsa_private_key_path);
-  const ecdsaRootKey = readPemFile(config.ua_root_ecdsa_private_key_path);
-  if (!rsaRootKey || !ecdsaRootKey) {
-    throw new Error("UA root private keys are not configured");
-  }
+  const { rsaRootCert, ecdsaRootCert, activeRoot } = await ensureBackendRoots(prisma);
   const rsa = await generateIntermediateSignedByRoot(
     `UA ${org.name} RSA Intermediate`,
     "rsa",
     rsaRootCert,
-    rsaRootKey
+    activeRoot.rsaKeyPem
   );
   const ecdsa = await generateIntermediateSignedByRoot(
     `UA ${org.name} ECDSA Intermediate`,
     "ecdsa",
     ecdsaRootCert,
-    ecdsaRootKey
+    activeRoot.ecdsaKeyPem
   );
   const rsaSerialHex = new crypto.X509Certificate(rsa.certPem).serialNumber.toUpperCase();
   const ecdsaSerialHex = new crypto.X509Certificate(ecdsa.certPem).serialNumber.toUpperCase();
@@ -277,6 +124,7 @@ async function generateOemTrustAnchor(
   const anchor = await prisma.oemTrustAnchor.create({
     data: {
       oemOrgId: org.id,
+      backendRootId: activeRoot.id,
       rsaCertPem: rsa.certPem,
       rsaKeyPem: rsa.keyPem,
       rsaSerialHex,
@@ -400,8 +248,7 @@ export default async function oemRoutes(app: FastifyInstance) {
     let updated;
     let anchor;
     try {
-      const config = loadConfig();
-      const result = await generateOemTrustAnchor(prisma, org, config);
+    const result = await generateOemTrustAnchor(prisma, org);
       updated = result.org;
       anchor = result.anchor;
     } catch (error) {
@@ -1003,8 +850,7 @@ export default async function oemRoutes(app: FastifyInstance) {
     let ecdsaRootCert: string;
     let orgWithRoots;
     try {
-      const config = loadConfig();
-      const backendRoots = await ensureBackendRoots(prisma, config);
+      const backendRoots = await ensureBackendRoots(prisma);
       localAuthority = backendRoots.localAuthority;
       rsaRootCert = backendRoots.rsaRootCert;
       ecdsaRootCert = backendRoots.ecdsaRootCert;

@@ -7,6 +7,31 @@ import { errorResponse } from "../lib/errors";
 import { saveConfig } from "../lib/config";
 import { registerUser } from "../services/auth";
 import { refreshAuthorityBundle } from "../services/attestationAuthorities";
+import { generateSelfSignedRoot } from "../services/rootAnchors";
+
+function buildBackendRootXml(root: {
+  name?: string | null;
+  rsaCertPem: string;
+  rsaKeyPem: string;
+  ecdsaCertPem: string;
+  ecdsaKeyPem: string;
+}) {
+  const wrap = (pem: string) => `\n${pem.trim()}\n`;
+  return (
+    `<?xml version="1.0"?>\n` +
+    `<BackendRootAnchor>\n` +
+    `  <Name>${root.name || "UA Backend Root"}</Name>\n` +
+    `  <Key algorithm="rsa">\n` +
+    `    <PrivateKey format="pem">${wrap(root.rsaKeyPem)}</PrivateKey>\n` +
+    `    <Certificate format="pem">${wrap(root.rsaCertPem)}</Certificate>\n` +
+    `  </Key>\n` +
+    `  <Key algorithm="ecdsa">\n` +
+    `    <PrivateKey format="pem">${wrap(root.ecdsaKeyPem)}</PrivateKey>\n` +
+    `    <Certificate format="pem">${wrap(root.ecdsaCertPem)}</Certificate>\n` +
+    `  </Key>\n` +
+    `</BackendRootAnchor>`
+  );
+}
 
 export default async function adminRoutes(app: FastifyInstance) {
   app.get("/settings", async (request, reply) => {
@@ -208,6 +233,181 @@ export default async function adminRoutes(app: FastifyInstance) {
       return;
     }
     await refreshAuthorityBundle(authority.id, authority.baseUrl);
+    reply.send({ ok: true });
+  });
+
+  app.get("/backend-roots", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const roots = await prisma.backendRootAnchor.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+    const response = roots.map((root) => {
+      let rsaSubject = "";
+      let ecdsaSubject = "";
+      try {
+        rsaSubject = new crypto.X509Certificate(root.rsaCertPem).subject;
+      } catch {
+        rsaSubject = "Invalid RSA certificate";
+      }
+      try {
+        ecdsaSubject = new crypto.X509Certificate(root.ecdsaCertPem).subject;
+      } catch {
+        ecdsaSubject = "Invalid ECDSA certificate";
+      }
+      return {
+        id: root.id,
+        name: root.name,
+        rsaSerialHex: root.rsaSerialHex,
+        ecdsaSerialHex: root.ecdsaSerialHex,
+        rsaSubject,
+        ecdsaSubject,
+        createdAt: root.createdAt.toISOString(),
+        revokedAt: root.revokedAt ? root.revokedAt.toISOString() : null
+      };
+    });
+    reply.send(response);
+  });
+
+  app.post("/backend-roots/generate", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const active = await prisma.backendRootAnchor.findFirst({
+      where: { revokedAt: null },
+      orderBy: { createdAt: "desc" }
+    });
+    if (active) {
+      reply
+        .code(400)
+        .send(errorResponse("INVALID_REQUEST", "Revoke the active backend root before generating"));
+      return;
+    }
+    const rsa = await generateSelfSignedRoot("UA Backend RSA Root", "rsa");
+    const ecdsa = await generateSelfSignedRoot("UA Backend ECDSA Root", "ecdsa");
+    const created = await prisma.backendRootAnchor.create({
+      data: {
+        name: "UA Backend Root",
+        rsaCertPem: rsa.certPem,
+        rsaKeyPem: rsa.keyPem,
+        rsaSerialHex: rsa.serialHex,
+        ecdsaCertPem: ecdsa.certPem,
+        ecdsaKeyPem: ecdsa.keyPem,
+        ecdsaSerialHex: ecdsa.serialHex
+      }
+    });
+    const localAuthority = await prisma.attestationAuthority.findFirst({
+      where: { isLocal: true, enabled: true }
+    });
+    if (localAuthority) {
+      await prisma.attestationRoot.createMany({
+        data: [
+          {
+            authorityId: localAuthority.id,
+            oemOrgId: null,
+            backendRootId: created.id,
+            pem: rsa.certPem,
+            name: "UA Backend RSA Root"
+          },
+          {
+            authorityId: localAuthority.id,
+            oemOrgId: null,
+            backendRootId: created.id,
+            pem: ecdsa.certPem,
+            name: "UA Backend ECDSA Root"
+          }
+        ]
+      });
+    }
+    const xml = buildBackendRootXml({
+      name: created.name,
+      rsaCertPem: created.rsaCertPem,
+      rsaKeyPem: created.rsaKeyPem,
+      ecdsaCertPem: created.ecdsaCertPem,
+      ecdsaKeyPem: created.ecdsaKeyPem
+    });
+    reply.header("Content-Type", "application/xml").send(xml);
+  });
+
+  app.post("/backend-roots/:id/revoke", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const root = await prisma.backendRootAnchor.findUnique({ where: { id } });
+    if (!root) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Backend root not found"));
+      return;
+    }
+    if (!root.revokedAt) {
+      await prisma.backendRootAnchor.update({
+        where: { id },
+        data: { revokedAt: new Date() }
+      });
+    }
+    await prisma.oemTrustAnchor.updateMany({
+      where: { backendRootId: id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    const deviceEntryRoots = await prisma.deviceEntryRoot.findMany({
+      where: { root: { backendRootId: id } },
+      select: { deviceEntryId: true }
+    });
+    if (deviceEntryRoots.length > 0) {
+      await prisma.deviceEntry.updateMany({
+        where: { id: { in: deviceEntryRoots.map((entry) => entry.deviceEntryId) } },
+        data: { revokedAt: new Date() }
+      });
+    }
+    reply.send({ ok: true });
+  });
+
+  app.delete("/backend-roots/:id", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const root = await prisma.backendRootAnchor.findUnique({ where: { id } });
+    if (!root) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Backend root not found"));
+      return;
+    }
+    if (!root.revokedAt) {
+      await prisma.backendRootAnchor.update({
+        where: { id },
+        data: { revokedAt: new Date() }
+      });
+    }
+    await prisma.oemTrustAnchor.updateMany({
+      where: { backendRootId: id, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    const rootIds = await prisma.attestationRoot.findMany({
+      where: { backendRootId: id },
+      select: { id: true }
+    });
+    if (rootIds.length > 0) {
+      await prisma.deviceEntryRoot.deleteMany({
+        where: { rootId: { in: rootIds.map((entry) => entry.id) } }
+      });
+      await prisma.attestationRoot.deleteMany({
+        where: { id: { in: rootIds.map((entry) => entry.id) } }
+      });
+    }
+    await prisma.backendRootAnchor.delete({ where: { id } });
     reply.send({ ok: true });
   });
 

@@ -46,7 +46,7 @@ export function buildServer() {
       const baseUrl = `${scheme}://${host}`;
       if (baseUrl !== localAuthorityBaseUrl) {
         localAuthorityBaseUrl = baseUrl;
-        await ensureLocalAuthority(config, baseUrl);
+        await ensureLocalAuthority(baseUrl);
       }
     }
   });
