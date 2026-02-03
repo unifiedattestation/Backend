@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: ua
       POSTGRES_PASSWORD: ua
       POSTGRES_DB: ua
-    ports:
-      - "5432:5432"
     volumes:
       - ua_pg:/var/lib/postgresql/data
   backend:
@@ -18,17 +16,32 @@ services:
       UA_CONFIG_PATH: /app/config.yaml
     depends_on:
       - postgres
-    ports:
-      - "3001:3001"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
   portal:
     image: ghcr.io/unifiedattestation/portal:latest
-    environment:
-      UA_BACKEND_URL: http://backend:3001
     depends_on:
+      - backend
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - portal
       - backend
     ports:
       - "3000:3000"
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
 volumes:
   ua_pg:
+configs:
+  caddyfile:
+    content: |
+      :3000 {
+        handle /api/* {
+          reverse_proxy backend:3001
+        }
+
+        reverse_proxy portal:3000
+      }

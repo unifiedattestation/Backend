@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import Layout from "../components/Layout";
 
-const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+const backendUrl = "";
 
 type App = {
   id: string;

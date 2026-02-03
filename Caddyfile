@@ -1,0 +1,7 @@
+:3000 {
+  handle_path /api/* {
+    reverse_proxy backend:3001
+  }
+
+  reverse_proxy portal:3000
+}
