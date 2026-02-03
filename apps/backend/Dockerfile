@@ -23,4 +23,4 @@ COPY --from=base /app/apps/backend/static /app/apps/backend/static
 COPY --from=base /app/prisma /app/prisma
 COPY --from=base /app/config.yaml /app/config.yaml
 ENV NODE_ENV=production
-CMD ["sh", "-c", "npx prisma db push && node apps/backend/dist/server.js"]
+CMD ["sh", "-c", "until npx prisma db push; do echo 'Waiting for database...'; sleep 2; done; node apps/backend/dist/server.js"]
