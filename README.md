@@ -69,12 +69,9 @@ curl -X POST http://localhost:3001/api/v1/app/decodeToken \
 - OEM registers device families + trust anchors
 
 ## Config
-See `config.yaml` for backend ID, signing keys, and API secret header. Keys are Ed25519 (base64 DER).
+See `config.yaml` for JWT and security settings. Backend ID + signing key are stored in the database.
 
 Env overrides:
-- `UA_BACKEND_ID`
-- `UA_API_SECRET_HEADER`
-- `UA_ACTIVE_KID`
 
 ## Tests
 ```bash

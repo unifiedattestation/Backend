@@ -21,8 +21,7 @@ export default async function appRoutes(app: FastifyInstance) {
       }
     },
     async (request, reply) => {
-      const apiSecretHeader = app.config.security.apiSecretHeader;
-      const rawSecret = requireApiSecret(request, apiSecretHeader);
+      const rawSecret = requireApiSecret(request, "x-ua-api-secret");
       const appRecord = await verifyApiSecret(rawSecret);
       if (!appRecord) {
         reply.code(401).send(errorResponse("UNAUTHORIZED", "Invalid API secret"));

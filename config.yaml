@@ -1,6 +1,5 @@
 jwtSecret: dev-secret-change-me
 security:
-  apiSecretHeader: x-ua-api-secret
   jwt:
     accessTtlMinutes: 15
     refreshTtlDays: 30

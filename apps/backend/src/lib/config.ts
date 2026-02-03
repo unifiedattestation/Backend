@@ -16,7 +16,7 @@ export type Config = {
   backendId?: string;
   signingKey?: SigningKey;
   security: {
-    apiSecretHeader: string;
+    apiSecretHeader?: string;
     jwt: {
       accessTtlMinutes: number;
       refreshTtlDays: number;
@@ -68,8 +68,7 @@ export function loadConfig(): Config {
     jwtSecret: process.env.UA_JWT_SECRET || loaded.jwtSecret,
     configPath,
     security: {
-      apiSecretHeader:
-        process.env.UA_API_SECRET_HEADER || loaded.security.apiSecretHeader || "x-ua-api-secret",
+      apiSecretHeader: "x-ua-api-secret",
       jwt: {
         accessTtlMinutes: Number(
           process.env.UA_JWT_ACCESS_TTL || loaded.security.jwt.accessTtlMinutes
