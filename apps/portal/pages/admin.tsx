@@ -44,6 +44,7 @@ type Authority = {
   name: string;
   baseUrl: string;
   enabled: boolean;
+  isLocal: boolean;
   roots: AuthorityRoot[];
   statusCachedAt?: string | null;
   keyAvailability?: {
