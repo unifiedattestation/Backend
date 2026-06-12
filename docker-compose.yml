@@ -1,7 +1,7 @@
-version: "3.9"
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ua
       POSTGRES_PASSWORD: ua
@@ -10,6 +10,7 @@ services:
       - ua_pg:/var/lib/postgresql/data
   backend:
     image: ghcr.io/unifiedattestation/backend:latest
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://ua:ua@postgres:5432/ua
       PORT: 3001
@@ -20,10 +21,12 @@ services:
       - ./config.yaml:/app/config.yaml:ro
   portal:
     image: ghcr.io/unifiedattestation/portal:latest
+    restart: unless-stopped
     depends_on:
       - backend
   caddy:
     image: caddy:2-alpine
+    restart: unless-stopped
     depends_on:
       - portal
       - backend
