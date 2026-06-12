@@ -39,9 +39,14 @@ export default async function federationRoutes(app: FastifyInstance) {
     let backendId = body.backendId;
     let publicKeys = body.publicKeys || [];
     if (body.url) {
-      const info = await fetchBackendInfo(body.url);
-      backendId = info.backendId;
-      publicKeys = info.publicKeys || [];
+      try {
+        const info = await fetchBackendInfo(body.url);
+        backendId = info.backendId;
+        publicKeys = info.publicKeys || [];
+      } catch (err: any) {
+        reply.code(502).send(errorResponse("UNREACHABLE", err.message || "Could not reach backend URL"));
+        return;
+      }
     }
     if (!backendId) {
       reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing backendId"));
@@ -95,7 +100,13 @@ export default async function federationRoutes(app: FastifyInstance) {
       reply.code(400).send(errorResponse("INVALID_REQUEST", "No URL stored for this backend — cannot refresh"));
       return;
     }
-    const info = await fetchBackendInfo(backend.url);
+    let info: any;
+    try {
+      info = await fetchBackendInfo(backend.url);
+    } catch (err: any) {
+      reply.code(502).send(errorResponse("UNREACHABLE", err.message || "Could not reach backend URL"));
+      return;
+    }
     const updated = await prisma.federationBackend.update({
       where: { id },
       data: { publicKeys: info.publicKeys || [] }

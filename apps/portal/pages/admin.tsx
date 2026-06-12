@@ -67,6 +67,7 @@ export default function AdminPage() {
   const [passwordUpdates, setPasswordUpdates] = useState<Record<string, string>>({});
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [backendRootError, setBackendRootError] = useState<string | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
   const [authorityNotice, setAuthorityNotice] = useState<Record<string, string>>({});
 
   const access = typeof window !== "undefined" ? localStorage.getItem("ua_access") : null;
@@ -179,6 +180,7 @@ export default function AdminPage() {
 
   const addBackend = async () => {
     if (!access || !newBackendUrl) return;
+    setBackendError(null);
     const res = await fetch(`${backendUrl}/api/v1/federation/backends`, {
       method: "POST",
       headers: {
@@ -191,11 +193,15 @@ export default function AdminPage() {
       setNewBackendUrl("");
       setNewBackendName("");
       fetchAll();
+      return;
     }
+    const { error } = await res.json().catch(() => ({ error: "Failed to add backend." }));
+    setBackendError(error || "Failed to add backend.");
   };
 
   const refreshBackend = async (id: string) => {
     if (!access) return;
+    setBackendError(null);
     const res = await fetch(`${backendUrl}/api/v1/federation/backends/${id}/refresh`, {
       method: "POST",
       headers: { Authorization: `Bearer ${access}` }
@@ -205,7 +211,7 @@ export default function AdminPage() {
       return;
     }
     const { error } = await res.json().catch(() => ({ error: "Refresh failed." }));
-    alert(error || "Refresh failed.");
+    setBackendError(error || "Refresh failed.");
   };
 
   const removeBackend = async (id: string) => {
@@ -559,6 +565,9 @@ export default function AdminPage() {
           <button className="rounded-lg bg-moss text-white px-4 py-2" onClick={addBackend}>
             Add Backend
           </button>
+          {backendError && (
+            <div className="text-sm text-red-600">{backendError}</div>
+          )}
         </div>
         <div className="mt-6 grid md:grid-cols-2 gap-4">
           {backends.map((backend) => (
