@@ -206,6 +206,29 @@ export default async function adminRoutes(app: FastifyInstance) {
     const created = await prisma.attestationAuthority.create({
       data: { name: body.name, baseUrl: body.baseUrl }
     });
+    try {
+      await refreshAuthorityBundle(created.id, created.baseUrl);
+    } catch (initialErr: any) {
+      // Fallback: if the URL is a UA backend, its root/status live under /api/v1/info
+      const fallbackBase = `${body.baseUrl!.replace(/\/$/, "")}/api/v1/info`;
+      let resolved = false;
+      try {
+        const probe = await fetch(fallbackBase);
+        if (probe.ok) {
+          await prisma.attestationAuthority.update({
+            where: { id: created.id },
+            data: { baseUrl: fallbackBase }
+          });
+          await refreshAuthorityBundle(created.id, fallbackBase);
+          resolved = true;
+        }
+      } catch {}
+      if (!resolved) {
+        await prisma.attestationAuthority.delete({ where: { id: created.id } });
+        reply.code(502).send(errorResponse("UNREACHABLE", initialErr.message || "Could not reach authority URL"));
+        return;
+      }
+    }
     reply.send(created);
   });
 

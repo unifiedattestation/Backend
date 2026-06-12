@@ -69,6 +69,7 @@ export default function AdminPage() {
   const [backendRootError, setBackendRootError] = useState<string | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
   const [authorityNotice, setAuthorityNotice] = useState<Record<string, string>>({});
+  const [authorityAddError, setAuthorityAddError] = useState<string | null>(null);
 
   const access = typeof window !== "undefined" ? localStorage.getItem("ua_access") : null;
 
@@ -240,6 +241,7 @@ export default function AdminPage() {
 
   const createAuthority = async () => {
     if (!access || !newAuthorityName || !newAuthorityUrl) return;
+    setAuthorityAddError(null);
     const res = await fetch(`${backendUrl}/api/v1/admin/attestation-authorities`, {
       method: "POST",
       headers: {
@@ -252,7 +254,10 @@ export default function AdminPage() {
       setNewAuthorityName("");
       setNewAuthorityUrl("");
       fetchAll();
+      return;
     }
+    const { error } = await res.json().catch(() => ({ error: "Failed to add authority." }));
+    setAuthorityAddError(error || "Failed to add authority.");
   };
 
   const deleteAuthority = async (id: string) => {
@@ -502,6 +507,9 @@ export default function AdminPage() {
           <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={createAuthority}>
             Add Authority
           </button>
+          {authorityAddError && (
+            <div className="text-sm text-red-600">{authorityAddError}</div>
+          )}
         </div>
         <div className="mt-6 space-y-4">
           {authorities.map((authority) => (
