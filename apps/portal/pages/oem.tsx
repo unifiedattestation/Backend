@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import Layout from "../components/Layout";
-
-const backendUrl = "";
+import { backendUrl } from "../lib/config";
 
 type DeviceFamily = {
   id: string;

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useRouter } from "next/router";
 
-const backendUrl = "";
+import { backendUrl } from "../lib/config";
 
 export default function LoginPage() {
   const router = useRouter();
