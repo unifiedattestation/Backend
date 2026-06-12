@@ -78,6 +78,31 @@ export default async function federationRoutes(app: FastifyInstance) {
     reply.send(updated);
   });
 
+  app.post("/backends/:id/refresh", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const backend = await prisma.federationBackend.findUnique({ where: { id } });
+    if (!backend) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Backend not found"));
+      return;
+    }
+    if (!backend.url) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "No URL stored for this backend — cannot refresh"));
+      return;
+    }
+    const info = await fetchBackendInfo(backend.url);
+    const updated = await prisma.federationBackend.update({
+      where: { id },
+      data: { publicKeys: info.publicKeys || [] }
+    });
+    reply.send(updated);
+  });
+
   app.delete("/backends/:id", async (request, reply) => {
     const user = requireUser(request);
     if (user.role !== "admin") {

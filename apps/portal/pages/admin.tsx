@@ -194,6 +194,35 @@ export default function AdminPage() {
     }
   };
 
+  const refreshBackend = async (id: string) => {
+    if (!access) return;
+    const res = await fetch(`${backendUrl}/api/v1/federation/backends/${id}/refresh`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      fetchAll();
+      return;
+    }
+    const { error } = await res.json().catch(() => ({ error: "Refresh failed." }));
+    alert(error || "Refresh failed.");
+  };
+
+  const removeBackend = async (id: string) => {
+    if (!access) return;
+    if (!confirm("Remove this trusted backend?")) return;
+    const res = await fetch(`${backendUrl}/api/v1/federation/backends/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      fetchAll();
+      return;
+    }
+    const { error } = await res.json().catch(() => ({ error: "Remove failed." }));
+    alert(error || "Remove failed.");
+  };
+
   const rotateKey = async () => {
     if (!access) return;
     await fetch(`${backendUrl}/api/v1/admin/settings/rotate-key`, {
@@ -218,6 +247,21 @@ export default function AdminPage() {
       setNewAuthorityUrl("");
       fetchAll();
     }
+  };
+
+  const deleteAuthority = async (id: string) => {
+    if (!access) return;
+    if (!confirm("Remove this attestation authority?")) return;
+    const res = await fetch(`${backendUrl}/api/v1/admin/attestation-authorities/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      fetchAll();
+      return;
+    }
+    const raw = await res.text();
+    setAuthorityNotice((prev) => ({ ...prev, [id]: raw || "Remove failed." }));
   };
 
   const refreshAuthority = async (id: string) => {
@@ -473,12 +517,22 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
-                <button
-                  className="rounded-lg bg-moss text-white px-3 py-2 text-xs"
-                  onClick={() => refreshAuthority(authority.id)}
-                >
-                  Refresh Roots/Status
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    className="rounded-lg bg-moss text-white px-3 py-2 text-xs"
+                    onClick={() => refreshAuthority(authority.id)}
+                  >
+                    Refresh Roots/Status
+                  </button>
+                  {!authority.isLocal && (
+                    <button
+                      className="rounded-lg bg-red-600 text-white px-3 py-2 text-xs"
+                      onClick={() => deleteAuthority(authority.id)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -509,10 +563,30 @@ export default function AdminPage() {
         <div className="mt-6 grid md:grid-cols-2 gap-4">
           {backends.map((backend) => (
             <div key={backend.id} className="rounded-xl border border-gray-200 p-4">
-              <div className="font-semibold">{backend.name}</div>
-              <div className="text-xs text-gray-500">{backend.backendId}</div>
-              <div className="text-xs text-gray-500">URL: {backend.url || "manual"}</div>
-              <div className="text-xs text-gray-500">Status: {backend.status}</div>
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{backend.name}</div>
+                  <div className="text-xs text-gray-500">{backend.backendId}</div>
+                  <div className="text-xs text-gray-500">URL: {backend.url || "manual"}</div>
+                  <div className="text-xs text-gray-500">Status: {backend.status}</div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  {backend.url && (
+                    <button
+                      className="rounded-lg bg-moss text-white px-3 py-2 text-xs"
+                      onClick={() => refreshBackend(backend.id)}
+                    >
+                      Refresh Keys
+                    </button>
+                  )}
+                  <button
+                    className="rounded-lg bg-red-600 text-white px-3 py-2 text-xs"
+                    onClick={() => removeBackend(backend.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
         </div>

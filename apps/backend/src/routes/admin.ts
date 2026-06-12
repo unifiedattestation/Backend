@@ -209,6 +209,27 @@ export default async function adminRoutes(app: FastifyInstance) {
     reply.send(created);
   });
 
+  app.delete("/attestation-authorities/:id", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const authority = await prisma.attestationAuthority.findUnique({ where: { id } });
+    if (!authority) {
+      reply.code(404).send(errorResponse("NOT_FOUND", "Authority not found"));
+      return;
+    }
+    if (authority.isLocal) {
+      reply.code(400).send(errorResponse("INVALID_REQUEST", "Cannot remove the local authority"));
+      return;
+    }
+    await prisma.attestationAuthority.delete({ where: { id } });
+    reply.send({ ok: true });
+  });
+
   app.post("/attestation-authorities/:id/refresh", async (request, reply) => {
     const user = requireUser(request);
     if (user.role !== "admin") {
