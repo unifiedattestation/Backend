@@ -125,6 +125,7 @@ export default function OemPage() {
   });
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
+  const [familyDeleteError, setFamilyDeleteError] = useState<string | null>(null);
 
   const [importJson, setImportJson] = useState("");
   const [importResult, setImportResult] = useState<{
@@ -286,6 +287,28 @@ export default function OemPage() {
     }
     setFamilyForm({ codename: "", model: "" });
     loadFamilies();
+  };
+
+  const deleteFamily = async () => {
+    if (!access || !selectedFamily) return;
+    setFamilyDeleteError(null);
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/oem/device-families/${selectedFamily.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${access}` }
+      });
+      if (!res.ok) {
+        const raw = await res.text();
+        let msg = raw || "Failed to remove device";
+        try { const p = JSON.parse(raw); msg = p.message || p.error || raw; } catch {}
+        setFamilyDeleteError(msg);
+        return;
+      }
+      setSelectedFamily(null);
+      loadFamilies();
+    } catch (e) {
+      setFamilyDeleteError((e as Error).message || "Network error");
+    }
   };
 
   const updateFamily = async () => {
@@ -777,9 +800,17 @@ export default function OemPage() {
                       />
                     Enabled
                   </label>
-                  <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={updateFamily}>
-                    Save Device Info
-                  </button>
+                  <div className="flex gap-2">
+                    <button className="rounded-lg bg-ink text-white px-4 py-2" onClick={updateFamily}>
+                      Save Device Info
+                    </button>
+                    <button className="rounded-lg bg-rose-500 text-white px-4 py-2" onClick={deleteFamily}>
+                      Remove
+                    </button>
+                  </div>
+                  {familyDeleteError && (
+                    <div className="text-sm text-red-600">{familyDeleteError}</div>
+                  )}
                 </div>
               </div>
             )}
