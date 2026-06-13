@@ -192,9 +192,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
         if (brand && normalizeMeta(brand) !== normalizeMeta(deviceMeta.brand)) {
           return false;
         }
-        if (family.model && normalizeMeta(family.model) !== normalizeMeta(deviceMeta.model)) {
-          return false;
-        }
         if (family.codename && normalizeMeta(family.codename) !== normalizeMeta(deviceMeta.device)) {
           return false;
         }
