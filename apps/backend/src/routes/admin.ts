@@ -249,6 +249,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       reply.code(400).send(errorResponse("INVALID_REQUEST", "Cannot remove the local authority"));
       return;
     }
+    await prisma.attestationRoot.deleteMany({ where: { authorityId: id } });
+    await prisma.deviceEntry.deleteMany({ where: { authorityId: id } });
+    await prisma.attestationStatusCache.deleteMany({ where: { authorityId: id } });
     await prisma.attestationAuthority.delete({ where: { id } });
     reply.send({ ok: true });
   });
