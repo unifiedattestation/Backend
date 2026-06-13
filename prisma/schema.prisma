@@ -76,6 +76,8 @@ model OemOrg {
   rsaRootKeyPem    String?
   ecdsaRootCertPem String?
   ecdsaRootKeyPem  String?
+  apiTokenHash     String?
+  apiTokenPrefix   String?
   createdAt        DateTime          @default(now())
   users            User[]            @relation("OemOrgMembers")
   deviceFamilies   DeviceFamily[]

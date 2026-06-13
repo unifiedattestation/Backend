@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
-import { errorResponse } from "../lib/errors";
+import { errorResponse, HttpError } from "../lib/errors";
 import { generateKeyboxXmlWithDualRoots } from "../services/keybox";
 import { generateIntermediateSignedByRoot } from "../services/rootAnchors";
 
@@ -205,6 +205,198 @@ function pickRootsForAuthority(roots: Array<{ id: string; pem: string }>) {
   return { rsaRoot, ecdsaRoot };
 }
 
+type ImportDeviceBody = {
+  device?: {
+    codename?: string;
+    model?: string;
+    manufacturer?: string;
+    brand?: string;
+    buildFingerprint?: string;
+  };
+  buildPolicy?: {
+    verifiedBootKey?: string;
+    verifiedBootHash?: string;
+    verifiedBootState?: string;
+    osVersionRaw?: string;
+    osPatchLevelRaw?: string;
+  };
+  trustAnchor?: {
+    ec?: {
+      leafCertificatePem?: string;
+      intermediateCertificatesPem?: string[];
+      rootCertificatePem?: string;
+    };
+    rsa?: {
+      leafCertificatePem?: string;
+      intermediateCertificatesPem?: string[];
+      rootCertificatePem?: string;
+    };
+  };
+};
+
+async function processDeviceImport(
+  body: ImportDeviceBody,
+  org: { id: string; name: string },
+  prisma: ReturnType<typeof getPrisma>
+) {
+  const codename = body.device?.codename;
+  const buildFingerprint = body.device?.buildFingerprint;
+  const verifiedBootKey = body.buildPolicy?.verifiedBootKey;
+
+  if (!codename) throw new HttpError(400, "INVALID_REQUEST", "Missing device.codename");
+  if (!buildFingerprint || !verifiedBootKey)
+    throw new HttpError(400, "INVALID_REQUEST", "Missing buildFingerprint or verifiedBootKey");
+
+  const ecTa = body.trustAnchor?.ec;
+  const rsaTa = body.trustAnchor?.rsa;
+
+  if (!ecTa?.leafCertificatePem)
+    throw new HttpError(400, "INVALID_REQUEST", "Missing trustAnchor.ec.leafCertificatePem");
+  if (!ecTa.rootCertificatePem)
+    throw new HttpError(400, "INVALID_REQUEST", "Missing trustAnchor.ec.rootCertificatePem");
+
+  const ecIntermediates = ecTa.intermediateCertificatesPem ?? [];
+  if (ecIntermediates.length === 0)
+    throw new HttpError(400, "INVALID_REQUEST", "trustAnchor.ec.intermediateCertificatesPem is empty — expected exactly 2 intermediates");
+  if (ecIntermediates.length === 1)
+    throw new HttpError(400, "INVALID_REQUEST", "trustAnchor.ec has only 1 intermediate — expected exactly 2 (device-batch cert + Google upper intermediate)");
+  if (ecIntermediates.length > 2)
+    throw new HttpError(400, "RKP_NOT_SUPPORTED", "trustAnchor.ec has more than 2 intermediates — Remote Key Provisioning (RKP) chains are not supported yet");
+
+  if (rsaTa) {
+    if (!rsaTa.leafCertificatePem)
+      throw new HttpError(400, "INVALID_REQUEST", "Missing trustAnchor.rsa.leafCertificatePem");
+    if (!rsaTa.rootCertificatePem)
+      throw new HttpError(400, "INVALID_REQUEST", "Missing trustAnchor.rsa.rootCertificatePem");
+    const rsaIntermediates = rsaTa.intermediateCertificatesPem ?? [];
+    if (rsaIntermediates.length === 0)
+      throw new HttpError(400, "INVALID_REQUEST", "trustAnchor.rsa.intermediateCertificatesPem is empty — expected exactly 2 intermediates");
+    if (rsaIntermediates.length === 1)
+      throw new HttpError(400, "INVALID_REQUEST", "trustAnchor.rsa has only 1 intermediate — expected exactly 2 (device-batch cert + Google upper intermediate)");
+    if (rsaIntermediates.length > 2)
+      throw new HttpError(400, "RKP_NOT_SUPPORTED", "trustAnchor.rsa has more than 2 intermediates — Remote Key Provisioning (RKP) chains are not supported yet");
+  }
+
+  const ecOemLeafPem      = ecIntermediates[0];
+  const ecOemIntermediatePem = ecIntermediates[1];
+  const ecRootPem         = ecTa.rootCertificatePem;
+  const rsaOemLeafPem     = rsaTa?.intermediateCertificatesPem?.[0] ?? null;
+  const rsaOemIntermediatePem = rsaTa?.intermediateCertificatesPem?.[1] ?? null;
+
+  let ecLeafSerial: string;
+  let ecIntermediateSerial: string;
+  let rsaLeafSerial: string | null = null;
+  let rsaIntermediateSerial: string | null = null;
+
+  try {
+    const serial = (pem: string) =>
+      new crypto.X509Certificate(pem).serialNumber.replace(/^0+/, "").toUpperCase();
+    ecLeafSerial = serial(ecOemLeafPem);
+    ecIntermediateSerial = serial(ecOemIntermediatePem);
+    if (rsaOemLeafPem && rsaOemIntermediatePem) {
+      rsaLeafSerial = serial(rsaOemLeafPem);
+      rsaIntermediateSerial = serial(rsaOemIntermediatePem);
+    }
+  } catch (e) {
+    throw new HttpError(400, "INVALID_REQUEST", "Failed to parse certificates: " + (e as Error).message);
+  }
+
+  const certFingerprint = (pem: string): string | null => {
+    try { return new crypto.X509Certificate(pem).fingerprint256; }
+    catch { return null; }
+  };
+
+  const ecRootFp = certFingerprint(ecRootPem);
+  if (!ecRootFp) throw new HttpError(400, "INVALID_REQUEST", "Cannot parse EC root certificate");
+
+  const allRegisteredRoots = await prisma.attestationRoot.findMany({ include: { authority: true } });
+  const enabledRoots = allRegisteredRoots.filter((r) => r.authority.enabled);
+
+  let matchedAuthority: (typeof allRegisteredRoots)[0]["authority"] | null = null;
+  for (const r of enabledRoots) {
+    const fp = certFingerprint(r.pem);
+    if (fp !== null && fp === ecRootFp) {
+      matchedAuthority = r.authority;
+      break;
+    }
+  }
+
+  if (matchedAuthority === null) {
+    let ecSubject = "(unknown)";
+    try { ecSubject = new crypto.X509Certificate(ecRootPem).subject; } catch { /* ignore */ }
+    throw new HttpError(400, "UNKNOWN_ROOT",
+      `Root certificate is not registered on this backend (subject: ${ecSubject}). ` +
+      `Add this root under Attestation Authorities before importing devices.`
+    );
+  }
+
+  const warnings: string[] = [];
+
+  let deviceFamily = await prisma.deviceFamily.findFirst({ where: { oemOrgId: org.id, codename } });
+  const familyCreated = !deviceFamily;
+  if (!deviceFamily) {
+    deviceFamily = await prisma.deviceFamily.create({
+      data: { name: codename, codename, model: body.device?.model ?? null, oemOrgId: org.id }
+    });
+  }
+
+  let buildPolicy = await prisma.buildPolicy.findFirst({
+    where: { deviceFamilyId: deviceFamily.id, buildFingerprint, verifiedBootKeyHex: verifiedBootKey.toLowerCase() }
+  });
+  const policyCreated = !buildPolicy;
+  if (!buildPolicy) {
+    buildPolicy = await prisma.buildPolicy.create({
+      data: {
+        deviceFamilyId: deviceFamily.id,
+        buildFingerprint,
+        verifiedBootKeyHex: verifiedBootKey.toLowerCase(),
+        verifiedBootHashHex: body.buildPolicy?.verifiedBootHash?.toLowerCase() ?? null,
+        osVersionRaw: body.buildPolicy?.osVersionRaw ? parseInt(body.buildPolicy.osVersionRaw) : null,
+        minOsPatchLevelRaw: body.buildPolicy?.osPatchLevelRaw ? parseInt(body.buildPolicy.osPatchLevelRaw) : null
+      }
+    });
+  }
+
+  let anchor: { id: string; rsaSerialHex: string; ecdsaSerialHex: string } | null = null;
+  if (rsaLeafSerial) {
+    const activeCount = await prisma.deviceEntry.count({ where: { oemOrgId: org.id, revokedAt: null } });
+    if (activeCount > 0) {
+      warnings.push("Active anchor already exists; revoke it before registering a new one");
+    } else {
+      try {
+        anchor = await prisma.deviceEntry.create({
+          data: {
+            oemOrgId: org.id,
+            deviceFamilyId: deviceFamily.id,
+            authorityId: matchedAuthority.id,
+            rsaSerialHex: rsaLeafSerial,
+            ecdsaSerialHex: ecLeafSerial,
+            rsaIntermediateSerialHex: rsaIntermediateSerial ?? null,
+            ecdsaIntermediateSerialHex: ecIntermediateSerial ?? null,
+            deviceId: codename
+          }
+        });
+      } catch (e: any) {
+        if (e?.code === "P2002") {
+          warnings.push("Device anchor already registered (serial already exists)");
+        } else {
+          throw e;
+        }
+      }
+    }
+  } else {
+    warnings.push("RSA trust anchor not present in JSON; anchor not registered (only EC available)");
+  }
+
+  return {
+    deviceFamily: { id: deviceFamily.id, codename: deviceFamily.codename, model: deviceFamily.model, created: familyCreated },
+    buildPolicy: { id: buildPolicy.id, buildFingerprint: buildPolicy.buildFingerprint, created: policyCreated },
+    anchor,
+    matchedAuthorityName: matchedAuthority.name,
+    warnings
+  };
+}
+
 export default async function oemRoutes(app: FastifyInstance) {
   app.get("/profile", async (request, reply) => {
     const user = requireUser(request);
@@ -212,7 +404,55 @@ export default async function oemRoutes(app: FastifyInstance) {
       return;
     }
     const org = await requireOemOrg(user.sub as string);
-    reply.send(org);
+    const { apiTokenHash: _hash, ...safe } = org as any;
+    reply.send(safe);
+  });
+
+  app.post("/profile/token", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) return;
+    const prisma = getPrisma();
+    const org = await requireOemOrg(user.sub as string);
+    const raw = `ua_oem_${crypto.randomBytes(24).toString("hex")}`;
+    const prefix = raw.slice(0, 12);
+    const hash = crypto.createHash("sha256").update(raw).digest("hex");
+    await prisma.oemOrg.update({
+      where: { id: org.id },
+      data: { apiTokenHash: hash, apiTokenPrefix: prefix }
+    });
+    reply.send({ token: raw, prefix });
+  });
+
+  app.delete("/profile/token", async (request, reply) => {
+    const user = requireUser(request);
+    if (!requireOemRole(user.role as string, reply)) return;
+    const prisma = getPrisma();
+    const org = await requireOemOrg(user.sub as string);
+    await prisma.oemOrg.update({
+      where: { id: org.id },
+      data: { apiTokenHash: null, apiTokenPrefix: null }
+    });
+    reply.send({ ok: true });
+  });
+
+  // Public endpoint — authenticated by OEM API token (Bearer), not JWT
+  app.post("/device/submit", async (request, reply) => {
+    const authHeader = (request.headers["authorization"] as string) || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      reply.code(401).send(errorResponse("UNAUTHORIZED", "Missing or invalid Authorization header"));
+      return;
+    }
+    const token = authHeader.slice(7).trim();
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const prisma = getPrisma();
+    const org = await prisma.oemOrg.findFirst({ where: { apiTokenHash: hash } });
+    if (!org) {
+      reply.code(401).send(errorResponse("UNAUTHORIZED", "Invalid OEM API token"));
+      return;
+    }
+    const body = request.body as ImportDeviceBody;
+    const result = await processDeviceImport(body, org, prisma);
+    reply.send(result);
   });
 
   app.put("/profile", async (request, reply) => {
@@ -903,261 +1143,10 @@ export default async function oemRoutes(app: FastifyInstance) {
   app.post("/import-device", async (request, reply) => {
     const user = requireUser(request);
     if (!requireOemRole(user.role as string, reply)) return;
-
     const org = await requireOemOrg(user.sub as string);
     const prisma = getPrisma();
-
-    const body = request.body as {
-      device?: {
-        codename?: string;
-        model?: string;
-        manufacturer?: string;
-        brand?: string;
-        buildFingerprint?: string;
-      };
-      buildPolicy?: {
-        verifiedBootKey?: string;
-        verifiedBootHash?: string;
-        verifiedBootState?: string;
-        osVersionRaw?: string;
-        osPatchLevelRaw?: string;
-      };
-      trustAnchor?: {
-        ec?: {
-          leafCertificatePem?: string;
-          intermediateCertificatesPem?: string[];
-          rootCertificatePem?: string;
-        };
-        rsa?: {
-          leafCertificatePem?: string;
-          intermediateCertificatesPem?: string[];
-          rootCertificatePem?: string;
-        };
-      };
-    };
-
-    const codename = body.device?.codename;
-    const buildFingerprint = body.device?.buildFingerprint;
-    const verifiedBootKey = body.buildPolicy?.verifiedBootKey;
-
-    if (!codename) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing device.codename"));
-      return;
-    }
-    if (!buildFingerprint || !verifiedBootKey) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing buildFingerprint or verifiedBootKey"));
-      return;
-    }
-
-    // Validate EC trust anchor structure
-    // chain[0] = ephemeral probe key (leafCertificatePem) — not used for anchor serials
-    // chain[1] = device-batch cert (intermediateCertificatesPem[0]) → OEM anchor "leaf"
-    // chain[2] = Google upper intermediate (intermediateCertificatesPem[1]) → OEM anchor "intermediate"
-    // chain[last] = root (rootCertificatePem)
-    const ecTa = body.trustAnchor?.ec;
-    const rsaTa = body.trustAnchor?.rsa;
-
-    if (!ecTa?.leafCertificatePem) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing trustAnchor.ec.leafCertificatePem"));
-      return;
-    }
-    if (!ecTa.rootCertificatePem) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing trustAnchor.ec.rootCertificatePem"));
-      return;
-    }
-    const ecIntermediates = ecTa.intermediateCertificatesPem ?? [];
-    if (ecIntermediates.length === 0) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "trustAnchor.ec.intermediateCertificatesPem is empty — expected exactly 2 intermediates"));
-      return;
-    }
-    if (ecIntermediates.length === 1) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "trustAnchor.ec has only 1 intermediate — expected exactly 2 (device-batch cert + Google upper intermediate)"));
-      return;
-    }
-    if (ecIntermediates.length > 2) {
-      reply.code(400).send(errorResponse("RKP_NOT_SUPPORTED", "trustAnchor.ec has more than 2 intermediates — Remote Key Provisioning (RKP) chains are not supported yet"));
-      return;
-    }
-
-    if (rsaTa) {
-      if (!rsaTa.leafCertificatePem) {
-        reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing trustAnchor.rsa.leafCertificatePem"));
-        return;
-      }
-      if (!rsaTa.rootCertificatePem) {
-        reply.code(400).send(errorResponse("INVALID_REQUEST", "Missing trustAnchor.rsa.rootCertificatePem"));
-        return;
-      }
-      const rsaIntermediates = rsaTa.intermediateCertificatesPem ?? [];
-      if (rsaIntermediates.length === 0) {
-        reply.code(400).send(errorResponse("INVALID_REQUEST", "trustAnchor.rsa.intermediateCertificatesPem is empty — expected exactly 2 intermediates"));
-        return;
-      }
-      if (rsaIntermediates.length === 1) {
-        reply.code(400).send(errorResponse("INVALID_REQUEST", "trustAnchor.rsa has only 1 intermediate — expected exactly 2 (device-batch cert + Google upper intermediate)"));
-        return;
-      }
-      if (rsaIntermediates.length > 2) {
-        reply.code(400).send(errorResponse("RKP_NOT_SUPPORTED", "trustAnchor.rsa has more than 2 intermediates — Remote Key Provisioning (RKP) chains are not supported yet"));
-        return;
-      }
-    }
-
-    const ecOemLeafPem      = ecIntermediates[0];
-    const ecOemIntermediatePem = ecIntermediates[1];
-    const ecRootPem         = ecTa.rootCertificatePem;
-    const rsaOemLeafPem     = rsaTa?.intermediateCertificatesPem?.[0] ?? null;
-    const rsaOemIntermediatePem = rsaTa?.intermediateCertificatesPem?.[1] ?? null;
-    const rsaRootPem        = rsaTa?.rootCertificatePem ?? null;
-
-    let ecLeafSerial: string;
-    let ecIntermediateSerial: string;
-    let rsaLeafSerial: string | null = null;
-    let rsaIntermediateSerial: string | null = null;
-
-    try {
-      const serial = (pem: string) =>
-        new crypto.X509Certificate(pem).serialNumber.replace(/^0+/, "").toUpperCase();
-      ecLeafSerial = serial(ecOemLeafPem);
-      ecIntermediateSerial = serial(ecOemIntermediatePem);
-      if (rsaOemLeafPem && rsaOemIntermediatePem) {
-        rsaLeafSerial = serial(rsaOemLeafPem);
-        rsaIntermediateSerial = serial(rsaOemIntermediatePem);
-      }
-    } catch (e) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Failed to parse certificates: " + (e as Error).message));
-      return;
-    }
-
-    // Compare by SHA-256 fingerprint — robust against PEM line-wrapping differences
-    const certFingerprint = (pem: string): string | null => {
-      try { return new crypto.X509Certificate(pem).fingerprint256; }
-      catch { return null; }
-    };
-
-    const ecRootFp = certFingerprint(ecRootPem);
-    if (!ecRootFp) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Cannot parse EC root certificate"));
-      return;
-    }
-
-    // Fetch every root cert from every attestation authority, filter enabled ones in JS
-    const allRegisteredRoots = await prisma.attestationRoot.findMany({
-      include: { authority: true }
-    });
-
-    const enabledRoots = allRegisteredRoots.filter((r) => r.authority.enabled);
-
-    let matchedAuthority: (typeof allRegisteredRoots)[0]["authority"] | null = null;
-    for (const r of enabledRoots) {
-      const fp = certFingerprint(r.pem);
-      if (fp !== null && fp === ecRootFp) {
-        matchedAuthority = r.authority;
-        break;
-      }
-    }
-
-    if (matchedAuthority === null) {
-      let ecSubject = "(unknown)";
-      try { ecSubject = new crypto.X509Certificate(ecRootPem).subject; } catch { /* ignore */ }
-      reply.code(400).send(errorResponse(
-        "UNKNOWN_ROOT",
-        `Root certificate is not registered on this backend (subject: ${ecSubject}). ` +
-        `Add this root under Attestation Authorities before importing devices.`
-      ));
-      return;
-    }
-
-    const warnings: string[] = [];
-
-    // Find or create DeviceFamily by codename
-    let deviceFamily = await prisma.deviceFamily.findFirst({
-      where: { oemOrgId: org.id, codename }
-    });
-    const familyCreated = !deviceFamily;
-    if (!deviceFamily) {
-      deviceFamily = await prisma.deviceFamily.create({
-        data: {
-          name: codename,
-          codename,
-          model: body.device?.model ?? null,
-          oemOrgId: org.id
-        }
-      });
-    }
-
-    // Find or create BuildPolicy
-    let buildPolicy = await prisma.buildPolicy.findFirst({
-      where: {
-        deviceFamilyId: deviceFamily.id,
-        buildFingerprint,
-        verifiedBootKeyHex: verifiedBootKey.toLowerCase()
-      }
-    });
-    const policyCreated = !buildPolicy;
-    if (!buildPolicy) {
-      buildPolicy = await prisma.buildPolicy.create({
-        data: {
-          deviceFamilyId: deviceFamily.id,
-          buildFingerprint,
-          verifiedBootKeyHex: verifiedBootKey.toLowerCase(),
-          verifiedBootHashHex: body.buildPolicy?.verifiedBootHash?.toLowerCase() ?? null,
-          osVersionRaw: body.buildPolicy?.osVersionRaw ? parseInt(body.buildPolicy.osVersionRaw) : null,
-          minOsPatchLevelRaw: body.buildPolicy?.osPatchLevelRaw ? parseInt(body.buildPolicy.osPatchLevelRaw) : null
-        }
-      });
-    }
-
-    // Create DeviceEntry anchor — requires RSA leaf serial (from intermediateCertificatesPem[0])
-    let anchor: { id: string; rsaSerialHex: string; ecdsaSerialHex: string } | null = null;
-    if (rsaLeafSerial) {
-      const activeCount = await prisma.deviceEntry.count({
-        where: { oemOrgId: org.id, revokedAt: null }
-      });
-      if (activeCount > 0) {
-        warnings.push("Active anchor already exists; revoke it before registering a new one");
-      } else {
-        try {
-          anchor = await prisma.deviceEntry.create({
-            data: {
-              oemOrgId: org.id,
-              deviceFamilyId: deviceFamily.id,
-              authorityId: matchedAuthority.id,
-              rsaSerialHex: rsaLeafSerial,
-              ecdsaSerialHex: ecLeafSerial,
-              rsaIntermediateSerialHex: rsaIntermediateSerial ?? null,
-              ecdsaIntermediateSerialHex: ecIntermediateSerial ?? null,
-              deviceId: codename
-            }
-          });
-        } catch (e: any) {
-          if (e?.code === "P2002") {
-            warnings.push("Device anchor already registered (serial already exists)");
-          } else {
-            throw e;
-          }
-        }
-      }
-    } else {
-      warnings.push("RSA trust anchor not present in JSON; anchor not registered (only EC available)");
-    }
-
-    reply.send({
-      deviceFamily: {
-        id: deviceFamily.id,
-        codename: deviceFamily.codename,
-        model: deviceFamily.model,
-        created: familyCreated
-      },
-      buildPolicy: {
-        id: buildPolicy.id,
-        buildFingerprint: buildPolicy.buildFingerprint,
-        created: policyCreated
-      },
-      anchor,
-      matchedAuthorityName: matchedAuthority.name,
-      warnings
-    });
+    const result = await processDeviceImport(request.body as ImportDeviceBody, org, prisma);
+    reply.send(result);
   });
 
   app.get("/reports/failing-devices", async (request, reply) => {

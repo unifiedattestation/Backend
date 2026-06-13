@@ -127,6 +127,11 @@ export default function OemPage() {
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
   const [familyDeleteError, setFamilyDeleteError] = useState<string | null>(null);
 
+  const [apiTokenPrefix, setApiTokenPrefix] = useState<string | null>(null);
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+
   const [importJson, setImportJson] = useState("");
   const [importResult, setImportResult] = useState<{
     deviceFamily: { id: string; codename: string | null; model: string | null; created: boolean };
@@ -221,9 +226,58 @@ export default function OemPage() {
     }
   };
 
+  const loadOemProfile = async () => {
+    if (!access) return;
+    const res = await fetch(`${backendUrl}/api/v1/oem/profile`, {
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setApiTokenPrefix(data.apiTokenPrefix || null);
+    }
+  };
+
+  const generateToken = async () => {
+    if (!access) return;
+    setTokenError(null);
+    setTokenLoading(true);
+    const res = await fetch(`${backendUrl}/api/v1/oem/profile/token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    setTokenLoading(false);
+    if (!res.ok) {
+      const raw = await res.text();
+      setTokenError(raw || "Failed to generate token");
+      return;
+    }
+    const data = await res.json();
+    setGeneratedToken(data.token);
+    setApiTokenPrefix(data.prefix);
+  };
+
+  const revokeToken = async () => {
+    if (!access) return;
+    setTokenError(null);
+    setTokenLoading(true);
+    const res = await fetch(`${backendUrl}/api/v1/oem/profile/token`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${access}` }
+    });
+    setTokenLoading(false);
+    if (!res.ok) {
+      const raw = await res.text();
+      setTokenError(raw || "Failed to revoke token");
+      return;
+    }
+    setApiTokenPrefix(null);
+    setGeneratedToken(null);
+  };
+
   useEffect(() => {
     loadFamilies();
     loadProfile();
+    loadOemProfile();
     loadFederation();
     loadAttestationServers();
   }, [access]);
@@ -1097,6 +1151,50 @@ export default function OemPage() {
           </button>
         </div>
         {passwordMessage && <div className="text-sm text-red-600 mt-2">{passwordMessage}</div>}
+        <div className="mt-6 border-t border-gray-200 pt-4">
+          <h3 className="text-sm font-semibold text-gray-700">API Token</h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Use this token to submit devices directly from the Android Service app.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 items-center">
+            <div className="text-xs text-gray-600">
+              Status:{" "}
+              {apiTokenPrefix
+                ? <span className="font-mono">active (prefix: {apiTokenPrefix})</span>
+                : "no token"}
+            </div>
+            <button
+              className="rounded-lg bg-moss text-white px-4 py-2 disabled:opacity-50"
+              onClick={generateToken}
+              disabled={tokenLoading}
+            >
+              {apiTokenPrefix ? "Regenerate Token" : "Generate Token"}
+            </button>
+            {apiTokenPrefix && (
+              <button
+                className="rounded-lg bg-rose-500 text-white px-4 py-2 disabled:opacity-50"
+                onClick={revokeToken}
+                disabled={tokenLoading}
+              >
+                Revoke Token
+              </button>
+            )}
+          </div>
+          {generatedToken && (
+            <div className="mt-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 space-y-1">
+              <div className="text-xs font-semibold text-green-800">Token generated — copy it now, it won&apos;t be shown again:</div>
+              <div className="font-mono text-xs break-all text-gray-800 select-all">{generatedToken}</div>
+              <button
+                className="text-xs text-green-700 underline"
+                onClick={() => setGeneratedToken(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {tokenError && <div className="text-sm text-red-600 mt-2">{tokenError}</div>}
+        </div>
+
         <div className="mt-6 border-t border-gray-200 pt-4">
           <h3 className="text-sm font-semibold text-gray-700">OEM Trust Anchor</h3>
           <p className="text-xs text-gray-500 mt-1">

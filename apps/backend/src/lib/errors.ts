@@ -19,6 +19,9 @@ export type ErrorCode =
   | "INVALID_TOKEN"
   | "INVALID_REQUEST"
   | "NOT_FOUND"
+  | "UNKNOWN_ROOT"
+  | "RKP_NOT_SUPPORTED"
+  | "DUPLICATE_SERIAL"
   | "INTERNAL_ERROR";
 
 export function errorResponse(code: ErrorCode, message: string, details?: Record<string, unknown>) {
