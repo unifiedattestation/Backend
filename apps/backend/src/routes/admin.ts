@@ -148,6 +148,19 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     const prisma = getPrisma();
     const { id } = request.params as { id: string };
+    const oemOrg = await prisma.oemOrg.findFirst({ where: { ownerUserId: id } });
+    if (oemOrg) {
+      const families = await prisma.deviceFamily.findMany({ where: { oemOrgId: oemOrg.id }, select: { id: true } });
+      const familyIds = families.map((f) => f.id);
+      await prisma.deviceReport.deleteMany({ where: { deviceFamilyId: { in: familyIds } } });
+      await prisma.buildPolicy.deleteMany({ where: { deviceFamilyId: { in: familyIds } } });
+      await prisma.deviceEntry.deleteMany({ where: { oemOrgId: oemOrg.id } });
+      await prisma.attestationRoot.deleteMany({ where: { oemOrgId: oemOrg.id } });
+      await prisma.oemTrustAnchor.deleteMany({ where: { oemOrgId: oemOrg.id } });
+      await prisma.deviceFamily.deleteMany({ where: { oemOrgId: oemOrg.id } });
+      await prisma.user.updateMany({ where: { oemOrgId: oemOrg.id }, data: { oemOrgId: null } });
+      await prisma.oemOrg.delete({ where: { id: oemOrg.id } });
+    }
     await prisma.user.delete({ where: { id } });
     reply.send({ ok: true });
   });
