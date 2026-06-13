@@ -362,9 +362,9 @@ async function processDeviceImport(
 
   let anchor: { id: string; rsaSerialHex: string; ecdsaSerialHex: string } | null = null;
   if (rsaLeafSerial) {
-    const activeCount = await prisma.deviceEntry.count({ where: { oemOrgId: org.id, revokedAt: null } });
+    const activeCount = await prisma.deviceEntry.count({ where: { oemOrgId: org.id, deviceFamilyId: deviceFamily.id, revokedAt: null } });
     if (activeCount > 0) {
-      warnings.push("Active anchor already exists; revoke it before registering a new one");
+      warnings.push("Active anchor already exists for this device; revoke it before registering a new one");
     } else {
       try {
         anchor = await prisma.deviceEntry.create({
