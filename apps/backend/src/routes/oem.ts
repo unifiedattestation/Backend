@@ -301,21 +301,24 @@ async function processDeviceImport(
     throw new HttpError(400, "INVALID_REQUEST", "Failed to parse certificates: " + (e as Error).message);
   }
 
-  const certFingerprint = (pem: string): string | null => {
-    try { return new crypto.X509Certificate(pem).fingerprint256; }
-    catch { return null; }
+  const certSubjectSerial = (pem: string): string | null => {
+    try {
+      const subject = new crypto.X509Certificate(pem).subject;
+      const match = subject.match(/serialNumber=([^\n,/]+)/i);
+      return match ? match[1].trim().toLowerCase() : null;
+    } catch { return null; }
   };
 
-  const ecRootFp = certFingerprint(ecRootPem);
-  if (!ecRootFp) throw new HttpError(400, "INVALID_REQUEST", "Cannot parse EC root certificate");
+  const ecRootSubjectSerial = certSubjectSerial(ecRootPem);
+  if (!ecRootSubjectSerial) throw new HttpError(400, "INVALID_REQUEST", "Cannot parse EC root certificate or extract subject serialNumber");
 
   const allRegisteredRoots = await prisma.attestationRoot.findMany({ include: { authority: true } });
   const enabledRoots = allRegisteredRoots.filter((r) => r.authority.enabled);
 
   let matchedAuthority: (typeof allRegisteredRoots)[0]["authority"] | null = null;
   for (const r of enabledRoots) {
-    const fp = certFingerprint(r.pem);
-    if (fp !== null && fp === ecRootFp) {
+    const serial = certSubjectSerial(r.pem);
+    if (serial !== null && serial === ecRootSubjectSerial) {
       matchedAuthority = r.authority;
       break;
     }
