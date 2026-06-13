@@ -46,12 +46,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <header className="px-8 py-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Unified Attestation Portal</h1>
         <nav className="flex items-center gap-4 text-sm">
-          {(role === "app_dev" || role === "admin") && (
+          {role === "app_dev" && (
             <Link href="/dashboard" className="hover:text-clay">
               App Dev
             </Link>
           )}
-          {(role === "oem" || role === "admin") && (
+          {role === "oem" && (
             <Link href="/oem" className="hover:text-clay">
               OEM
             </Link>
