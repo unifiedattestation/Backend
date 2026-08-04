@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Unified Attestation</title>
+  <desc id="description">Secure device attestation and trust management platform</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071226"/>
+      <stop offset="1" stop-color="#153464"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.8" cy="0.15" r="0.75">
+      <stop offset="0" stop-color="#315fbe" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#071226" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#background)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <circle cx="1090" cy="100" r="220" fill="#fff" opacity="0.025"/>
+  <circle cx="1060" cy="550" r="310" fill="#fff" opacity="0.018"/>
+  <g transform="translate(90 150) scale(1.28)" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="28" y="28" width="200" height="200" rx="56" stroke-width="14"/>
+    <path d="M78 86V146C78 176 96 196 128 196C160 196 178 176 178 146V86" stroke-width="18"/>
+    <path d="M96 140L122 166L174 108" stroke-width="18"/>
+    <circle cx="78" cy="86" r="7" fill="#fff" stroke="none"/>
+    <circle cx="178" cy="86" r="7" fill="#fff" stroke="none"/>
+  </g>
+  <text x="455" y="270" fill="#fff" font-family="Inter, Arial, sans-serif" font-size="58" font-weight="700">Unified Attestation</text>
+  <text x="458" y="330" fill="#b9c8e4" font-family="Inter, Arial, sans-serif" font-size="27">Secure device attestation and trust management</text>
+  <g transform="translate(458 382)">
+    <rect width="192" height="48" rx="24" fill="#fff" opacity="0.1"/>
+    <circle cx="26" cy="24" r="6" fill="#4ade80"/>
+    <text x="46" y="31" fill="#e8eef9" font-family="Inter, Arial, sans-serif" font-size="18">Trust. Verify. Connect.</text>
+  </g>
+</svg>

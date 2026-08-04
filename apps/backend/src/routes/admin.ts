@@ -40,9 +40,33 @@ export default async function adminRoutes(app: FastifyInstance) {
       reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
       return;
     }
+    const prisma = getPrisma();
+    const storedSettings = app.config.backendId
+      ? await prisma.backendSettings.findUnique({
+          where: { backendId: app.config.backendId },
+          select: {
+            signingKid: true,
+            signingAlg: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+      : null;
     reply.send({
       backendId: app.config.backendId,
-      publicKey: app.config.signingKey?.publicKey || null
+      publicKey: app.config.signingKey?.publicKey || null,
+      signingKey: {
+        kid: storedSettings?.signingKid || app.config.signingKey?.kid || null,
+        algorithm: storedSettings?.signingAlg || app.config.signingKey?.alg || null,
+        createdAt: storedSettings?.createdAt || null,
+        updatedAt: storedSettings?.updatedAt || null,
+      },
+      sessionSecurity: {
+        accessTokenLifetimeMinutes: app.config.security.jwt.accessTtlMinutes,
+        refreshTokenLifetimeDays: app.config.security.jwt.refreshTtlDays,
+        failedLoginProtection: true,
+      },
+      apiSecretHeader: app.config.security.apiSecretHeader || "x-ua-api-secret",
     });
   });
 
@@ -54,7 +78,37 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     const key = await rotateBackendSigningKey();
     app.config.signingKey = key;
+    const prisma = getPrisma();
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: String(user.sub),
+        action: "SIGNING_KEY_ROTATED",
+        details: { kid: key.kid, algorithm: key.alg },
+      },
+    });
     reply.send({ kid: key.kid });
+  });
+
+  app.get("/audit-logs", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const logs = await prisma.auditLog.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        actor: {
+          select: {
+            email: true,
+            displayName: true,
+          },
+        },
+      },
+    });
+    reply.send(logs);
   });
 
   app.get("/users", async (request, reply) => {
@@ -72,8 +126,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         role: true,
         disabledAt: true,
         displayName: true,
-        createdAt: true
-      }
+        createdAt: true,
+      },
     });
     reply.send(users);
   });
@@ -95,7 +149,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       email: created.email,
       role: created.role,
       displayName: created.displayName,
-      createdAt: created.createdAt
+      createdAt: created.createdAt,
     });
   });
 
@@ -109,13 +163,33 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const updated = await prisma.user.update({
       where: { id },
-      data: { disabledAt: new Date() }
+      data: { disabledAt: new Date() },
     });
     reply.send({
       id: updated.id,
       email: updated.email,
       role: updated.role,
-      disabledAt: updated.disabledAt
+      disabledAt: updated.disabledAt,
+    });
+  });
+
+  app.post("/users/:id/enable", async (request, reply) => {
+    const user = requireUser(request);
+    if (user.role !== "admin") {
+      reply.code(403).send(errorResponse("FORBIDDEN", "Admin role required"));
+      return;
+    }
+    const prisma = getPrisma();
+    const { id } = request.params as { id: string };
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { disabledAt: null },
+    });
+    reply.send({
+      id: updated.id,
+      email: updated.email,
+      role: updated.role,
+      disabledAt: updated.disabledAt,
     });
   });
 
@@ -128,14 +202,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = request.body as { password?: string };
     if (!body.password || body.password.length < 5) {
-      reply.code(400).send(errorResponse("INVALID_REQUEST", "Password must be at least 5 characters"));
+      reply
+        .code(400)
+        .send(errorResponse("INVALID_REQUEST", "Password must be at least 5 characters"));
       return;
     }
     const prisma = getPrisma();
     const passwordHash = await argon2.hash(body.password);
     await prisma.user.update({
       where: { id },
-      data: { passwordHash }
+      data: { passwordHash },
     });
     reply.send({ ok: true });
   });
@@ -150,7 +226,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const oemOrg = await prisma.oemOrg.findFirst({ where: { ownerUserId: id } });
     if (oemOrg) {
-      const families = await prisma.deviceFamily.findMany({ where: { oemOrgId: oemOrg.id }, select: { id: true } });
+      const families = await prisma.deviceFamily.findMany({
+        where: { oemOrgId: oemOrg.id },
+        select: { id: true },
+      });
       const familyIds = families.map((f) => f.id);
       await prisma.deviceReport.deleteMany({ where: { deviceFamilyId: { in: familyIds } } });
       await prisma.buildPolicy.deleteMany({ where: { deviceFamilyId: { in: familyIds } } });
@@ -174,7 +253,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const prisma = getPrisma();
     const authorities = await prisma.attestationAuthority.findMany({
       orderBy: { createdAt: "desc" },
-      include: { roots: true, status: true }
+      include: { roots: true, status: true },
     });
     const response = authorities.map((authority) => {
       const keyTypes = authority.roots.map((root) => {
@@ -197,8 +276,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         statusCachedAt: authority.status?.fetchedAt || null,
         keyAvailability: {
           rsa: hasRsa,
-          ecdsa: hasEcdsa
-        }
+          ecdsa: hasEcdsa,
+        },
       };
     });
     reply.send(response);
@@ -217,7 +296,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     const prisma = getPrisma();
     const created = await prisma.attestationAuthority.create({
-      data: { name: body.name, baseUrl: body.baseUrl }
+      data: { name: body.name, baseUrl: body.baseUrl },
     });
     try {
       await refreshAuthorityBundle(created.id, created.baseUrl);
@@ -230,7 +309,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         if (probe.ok) {
           await prisma.attestationAuthority.update({
             where: { id: created.id },
-            data: { baseUrl: fallbackBase }
+            data: { baseUrl: fallbackBase },
           });
           await refreshAuthorityBundle(created.id, fallbackBase);
           resolved = true;
@@ -238,7 +317,11 @@ export default async function adminRoutes(app: FastifyInstance) {
       } catch {}
       if (!resolved) {
         await prisma.attestationAuthority.delete({ where: { id: created.id } });
-        reply.code(502).send(errorResponse("UNREACHABLE", initialErr.message || "Could not reach authority URL"));
+        reply
+          .code(502)
+          .send(
+            errorResponse("UNREACHABLE", initialErr.message || "Could not reach authority URL"),
+          );
         return;
       }
     }
@@ -294,7 +377,15 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     const prisma = getPrisma();
     const roots = await prisma.backendRootAnchor.findMany({
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      include: {
+        oemTrustAnchors: {
+          select: {
+            oemOrgId: true,
+            revokedAt: true,
+          },
+        },
+      },
     });
     const response = roots.map((root) => {
       let rsaSubject = "";
@@ -317,7 +408,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         rsaSubject,
         ecdsaSubject,
         createdAt: root.createdAt.toISOString(),
-        revokedAt: root.revokedAt ? root.revokedAt.toISOString() : null
+        revokedAt: root.revokedAt ? root.revokedAt.toISOString() : null,
+        linkedOemCount: new Set(
+          root.oemTrustAnchors
+            .filter((anchor) => !anchor.revokedAt)
+            .map((anchor) => anchor.oemOrgId),
+        ).size,
       };
     });
     reply.send(response);
@@ -332,7 +428,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const prisma = getPrisma();
     const active = await prisma.backendRootAnchor.findFirst({
       where: { revokedAt: null },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
     });
     if (active) {
       reply
@@ -350,11 +446,11 @@ export default async function adminRoutes(app: FastifyInstance) {
         rsaSerialHex: rsa.serialHex,
         ecdsaCertPem: ecdsa.certPem,
         ecdsaKeyPem: ecdsa.keyPem,
-        ecdsaSerialHex: ecdsa.serialHex
-      }
+        ecdsaSerialHex: ecdsa.serialHex,
+      },
     });
     const localAuthority = await prisma.attestationAuthority.findFirst({
-      where: { isLocal: true, enabled: true }
+      where: { isLocal: true, enabled: true },
     });
     if (localAuthority) {
       await prisma.attestationRoot.createMany({
@@ -364,16 +460,16 @@ export default async function adminRoutes(app: FastifyInstance) {
             oemOrgId: null,
             backendRootId: created.id,
             pem: rsa.certPem,
-            name: "UA Backend RSA Root"
+            name: "UA Backend RSA Root",
           },
           {
             authorityId: localAuthority.id,
             oemOrgId: null,
             backendRootId: created.id,
             pem: ecdsa.certPem,
-            name: "UA Backend ECDSA Root"
-          }
-        ]
+            name: "UA Backend ECDSA Root",
+          },
+        ],
       });
     }
     const xml = buildBackendRootXml({
@@ -381,7 +477,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       rsaCertPem: created.rsaCertPem,
       rsaKeyPem: created.rsaKeyPem,
       ecdsaCertPem: created.ecdsaCertPem,
-      ecdsaKeyPem: created.ecdsaKeyPem
+      ecdsaKeyPem: created.ecdsaKeyPem,
     });
     reply.header("Content-Type", "application/xml").send(xml);
   });
@@ -402,21 +498,21 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!root.revokedAt) {
       await prisma.backendRootAnchor.update({
         where: { id },
-        data: { revokedAt: new Date() }
+        data: { revokedAt: new Date() },
       });
     }
     await prisma.oemTrustAnchor.updateMany({
       where: { backendRootId: id, revokedAt: null },
-      data: { revokedAt: new Date() }
+      data: { revokedAt: new Date() },
     });
     const localAuthorities = await prisma.attestationAuthority.findMany({
       where: { isLocal: true },
-      select: { id: true }
+      select: { id: true },
     });
     if (localAuthorities.length > 0) {
       await prisma.deviceEntry.updateMany({
         where: { authorityId: { in: localAuthorities.map((entry) => entry.id) }, revokedAt: null },
-        data: { revokedAt: new Date() }
+        data: { revokedAt: new Date() },
       });
     }
     reply.send({ ok: true });
@@ -438,24 +534,23 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!root.revokedAt) {
       await prisma.backendRootAnchor.update({
         where: { id },
-        data: { revokedAt: new Date() }
+        data: { revokedAt: new Date() },
       });
     }
     await prisma.oemTrustAnchor.updateMany({
       where: { backendRootId: id, revokedAt: null },
-      data: { revokedAt: new Date() }
+      data: { revokedAt: new Date() },
     });
     const rootIds = await prisma.attestationRoot.findMany({
       where: { backendRootId: id },
-      select: { id: true }
+      select: { id: true },
     });
     if (rootIds.length > 0) {
       await prisma.attestationRoot.deleteMany({
-        where: { id: { in: rootIds.map((entry) => entry.id) } }
+        where: { id: { in: rootIds.map((entry) => entry.id) } },
       });
     }
     await prisma.backendRootAnchor.delete({ where: { id } });
     reply.send({ ok: true });
   });
-
 }

@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
-import OemMenu from "../components/oem/Menu";
-import OemOverview from "../sections/oem/Overview";
+import OemMenu from "../../components/oem/Menu";
+import OemReports from "../../sections/oem/Reports";
 
-export default function OemPage() {
+export default function OemReportsPage() {
   const [organizationName, setOrganizationName] = useState("OEM Portal");
   const handleOrganizationLoaded = useCallback((name: string) => {
     setOrganizationName(name || "OEM Portal");
@@ -15,8 +15,8 @@ export default function OemPage() {
   };
 
   return (
-    <OemMenu organizationName={organizationName} onLogout={logout}>
-      <OemOverview onOrganizationLoaded={handleOrganizationLoaded} />
+    <OemMenu activeItem="reports" organizationName={organizationName} onLogout={logout}>
+      <OemReports onOrganizationLoaded={handleOrganizationLoaded} />
     </OemMenu>
   );
 }
