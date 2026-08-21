@@ -9,6 +9,7 @@ import { RateLimiter } from "./services/rateLimiter";
 import { ensureDefaultAdmin } from "./services/auth";
 import { ensureLocalAuthority } from "./services/localAuthority";
 import { ensureBackendSettings } from "./services/backendSettings";
+import { backfillDeviceFamilySlugs } from "./services/deviceSlugBackfill";
 import authRoutes from "./routes/auth";
 import infoRoutes from "./routes/info";
 import devicesRoutes from "./routes/devices";
@@ -104,6 +105,7 @@ export function buildServer() {
     app.config.backendId = settings.backendId;
     app.config.signingKey = settings.signingKey;
     await ensureDefaultAdmin();
+    await backfillDeviceFamilySlugs();
   });
 
   return app;
