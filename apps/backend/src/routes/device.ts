@@ -184,8 +184,8 @@ export default async function deviceRoutes(app: FastifyInstance) {
         orderBy: { createdAt: "desc" }
       });
       const deviceFamily = families.find((family) => {
-        const manufacturer = family.manufacturer || family.oemOrg?.manufacturer || undefined;
-        const brand = family.brand || family.oemOrg?.brand || undefined;
+        const manufacturer = family.oemOrg?.manufacturer || undefined;
+        const brand = family.oemOrg?.brand || undefined;
         if (manufacturer && normalizeMeta(manufacturer) !== normalizeMeta(deviceMeta.manufacturer)) {
           return false;
         }
@@ -202,8 +202,8 @@ export default async function deviceRoutes(app: FastifyInstance) {
           id: family.id,
           codename: family.codename,
           model: family.model,
-          manufacturer: family.manufacturer || family.oemOrg?.manufacturer || null,
-          brand: family.brand || family.oemOrg?.brand || null
+          manufacturer: family.oemOrg?.manufacturer || null,
+          brand: family.oemOrg?.brand || null
         }));
         request.log.warn(
           { deviceMeta, candidates: attempted },

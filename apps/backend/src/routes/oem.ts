@@ -245,7 +245,7 @@ type ImportDeviceBody = {
 
 async function processDeviceImport(
   body: ImportDeviceBody,
-  org: { id: string; name: string; manufacturer?: string | null; brand?: string | null },
+  org: { id: string; name: string; manufacturer?: string | null },
   prisma: ReturnType<typeof getPrisma>,
 ) {
   const codename = body.device?.codename;
@@ -390,17 +390,13 @@ async function processDeviceImport(
   let deviceFamily = await prisma.deviceFamily.findFirst({ where: { oemOrgId: org.id, codename } });
   const familyCreated = !deviceFamily;
   if (!deviceFamily) {
-    const manufacturer = body.device?.manufacturer ?? org.manufacturer ?? null;
-    const brand = body.device?.brand ?? org.brand ?? null;
-    const slugBase = buildDeviceSlugBase(manufacturer ?? "device", codename);
+    const slugBase = buildDeviceSlugBase(org.manufacturer ?? "device", codename);
     const slug = await ensureUniqueDeviceSlug(prisma, slugBase);
     deviceFamily = await prisma.deviceFamily.create({
       data: {
         name: codename,
         codename,
         model: body.device?.model ?? null,
-        manufacturer,
-        brand,
         slug,
         oemOrgId: org.id,
       },
@@ -1068,8 +1064,6 @@ export default async function oemRoutes(app: FastifyInstance) {
       name: family.codename || family.name,
       codename: family.codename,
       model: family.model,
-      manufacturer: family.manufacturer,
-      brand: family.brand,
       enabled: family.enabled,
       createdAt: family.createdAt,
       activeBuilds: family.buildPolicies.filter((build) => build.enabled).length,
@@ -1119,8 +1113,6 @@ export default async function oemRoutes(app: FastifyInstance) {
         name: body.codename,
         codename: body.codename,
         model: body.model,
-        manufacturer: org.manufacturer,
-        brand: org.brand,
         slug,
         enabled: body.enabled ?? true,
         oemOrgId: org.id,

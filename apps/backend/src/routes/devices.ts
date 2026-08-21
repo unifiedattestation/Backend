@@ -43,10 +43,10 @@ export default async function devicesRoutes(app: FastifyInstance) {
                 { name: { contains: query.search, mode: "insensitive" as const } },
                 { codename: { contains: query.search, mode: "insensitive" as const } },
                 { model: { contains: query.search, mode: "insensitive" as const } },
-                { manufacturer: { contains: query.search, mode: "insensitive" as const } },
-                { brand: { contains: query.search, mode: "insensitive" as const } },
                 { slug: { contains: query.search, mode: "insensitive" as const } },
-                { oemOrg: { name: { contains: query.search, mode: "insensitive" as const } } }
+                { oemOrg: { name: { contains: query.search, mode: "insensitive" as const } } },
+                { oemOrg: { manufacturer: { contains: query.search, mode: "insensitive" as const } } },
+                { oemOrg: { brand: { contains: query.search, mode: "insensitive" as const } } }
               ]
             }
           : {})
@@ -58,16 +58,14 @@ export default async function devicesRoutes(app: FastifyInstance) {
           where,
           select: {
             slug: true,
-            manufacturer: true,
-            brand: true,
             model: true,
             codename: true,
             name: true,
             enabled: true,
             createdAt: true,
-            oemOrg: { select: { name: true } }
+            oemOrg: { select: { name: true, manufacturer: true, brand: true } }
           },
-          orderBy: [{ manufacturer: "asc" }, { name: "asc" }],
+          orderBy: [{ oemOrg: { manufacturer: "asc" } }, { name: "asc" }],
           skip: (query.page - 1) * query.pageSize,
           take: query.pageSize
         })
@@ -76,8 +74,8 @@ export default async function devicesRoutes(app: FastifyInstance) {
       reply.send({
         items: families.map((f) => ({
           slug: f.slug,
-          manufacturer: f.manufacturer,
-          brand: f.brand,
+          manufacturer: f.oemOrg.manufacturer,
+          brand: f.oemOrg.brand,
           model: f.model,
           codename: f.codename,
           name: f.name,
@@ -113,14 +111,12 @@ export default async function devicesRoutes(app: FastifyInstance) {
         where: { slug, enabled: true },
         select: {
           slug: true,
-          manufacturer: true,
-          brand: true,
           model: true,
           codename: true,
           name: true,
           enabled: true,
           createdAt: true,
-          oemOrg: { select: { name: true } },
+          oemOrg: { select: { name: true, manufacturer: true, brand: true } },
           buildPolicies: {
             where: { enabled: true },
             orderBy: { createdAt: "desc" },
@@ -156,8 +152,8 @@ export default async function devicesRoutes(app: FastifyInstance) {
       const entry = family.deviceEntries[0];
       reply.send({
         slug: family.slug,
-        manufacturer: family.manufacturer,
-        brand: family.brand,
+        manufacturer: family.oemOrg.manufacturer,
+        brand: family.oemOrg.brand,
         model: family.model,
         codename: family.codename,
         name: family.name,
