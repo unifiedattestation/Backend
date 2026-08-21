@@ -110,7 +110,7 @@ model DeviceFamily {
   model         String?
   manufacturer  String?
   brand         String?
-  slug          String         @unique
+  slug          String         @unique @default(dbgenerated("gen_random_uuid()::text"))
   enabled       Boolean        @default(true)
   createdAt     DateTime       @default(now())
   oemOrg        OemOrg         @relation(fields: [oemOrgId], references: [id])
