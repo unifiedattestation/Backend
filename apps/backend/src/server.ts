@@ -11,6 +11,7 @@ import { ensureLocalAuthority } from "./services/localAuthority";
 import { ensureBackendSettings } from "./services/backendSettings";
 import authRoutes from "./routes/auth";
 import infoRoutes from "./routes/info";
+import devicesRoutes from "./routes/devices";
 import deviceRoutes from "./routes/device";
 import appRoutes from "./routes/app";
 import federationRoutes from "./routes/federation";
@@ -63,6 +64,7 @@ export function buildServer() {
 
   app.decorate("config", config);
   app.decorate("authRateLimiter", new RateLimiter(20, 60));
+  app.decorate("publicRateLimiter", new RateLimiter(120, 60));
 
   app.register(cors, {
     origin: true,
@@ -88,6 +90,7 @@ export function buildServer() {
 
   app.register(authRoutes, { prefix: "/api/v1/auth" });
   app.register(infoRoutes, { prefix: "/api/v1/info" });
+  app.register(devicesRoutes, { prefix: "/api/v1/devices" });
   app.register(deviceRoutes, { prefix: "/api/v1/device" });
   app.register(appRoutes, { prefix: "/api/v1/app" });
   app.register(appManagementRoutes, { prefix: "/api/v1/apps" });
@@ -122,5 +125,6 @@ declare module "fastify" {
   interface FastifyInstance {
     config: ReturnType<typeof loadConfig>;
     authRateLimiter: RateLimiter;
+    publicRateLimiter: RateLimiter;
   }
 }

@@ -3,6 +3,7 @@ import { FastifyInstance } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import { requireUser } from "../lib/auth";
 import { errorResponse, HttpError } from "../lib/errors";
+import { buildDeviceSlugBase, ensureUniqueDeviceSlug } from "../lib/slug";
 import { generateKeyboxXmlWithDualRoots } from "../services/keybox";
 import { generateIntermediateSignedByRoot } from "../services/rootAnchors";
 
@@ -244,7 +245,7 @@ type ImportDeviceBody = {
 
 async function processDeviceImport(
   body: ImportDeviceBody,
-  org: { id: string; name: string },
+  org: { id: string; name: string; manufacturer?: string | null; brand?: string | null },
   prisma: ReturnType<typeof getPrisma>,
 ) {
   const codename = body.device?.codename;
@@ -389,8 +390,20 @@ async function processDeviceImport(
   let deviceFamily = await prisma.deviceFamily.findFirst({ where: { oemOrgId: org.id, codename } });
   const familyCreated = !deviceFamily;
   if (!deviceFamily) {
+    const manufacturer = body.device?.manufacturer ?? org.manufacturer ?? null;
+    const brand = body.device?.brand ?? org.brand ?? null;
+    const slugBase = buildDeviceSlugBase(manufacturer ?? "device", codename);
+    const slug = await ensureUniqueDeviceSlug(prisma, slugBase);
     deviceFamily = await prisma.deviceFamily.create({
-      data: { name: codename, codename, model: body.device?.model ?? null, oemOrgId: org.id },
+      data: {
+        name: codename,
+        codename,
+        model: body.device?.model ?? null,
+        manufacturer,
+        brand,
+        slug,
+        oemOrgId: org.id,
+      },
     });
   }
 
@@ -1099,11 +1112,16 @@ export default async function oemRoutes(app: FastifyInstance) {
         .send(errorResponse("INVALID_REQUEST", "OEM profile must include manufacturer and brand"));
       return;
     }
+    const slugBase = buildDeviceSlugBase(org.manufacturer, body.codename);
+    const slug = await ensureUniqueDeviceSlug(prisma, slugBase);
     const family = await prisma.deviceFamily.create({
       data: {
         name: body.codename,
         codename: body.codename,
         model: body.model,
+        manufacturer: org.manufacturer,
+        brand: org.brand,
+        slug,
         enabled: body.enabled ?? true,
         oemOrgId: org.id,
       },

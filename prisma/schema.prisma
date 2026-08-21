@@ -110,12 +110,16 @@ model DeviceFamily {
   model         String?
   manufacturer  String?
   brand         String?
+  slug          String         @unique
   enabled       Boolean        @default(true)
   createdAt     DateTime       @default(now())
   oemOrg        OemOrg         @relation(fields: [oemOrgId], references: [id])
   buildPolicies BuildPolicy[]
   reports       DeviceReport[]
   deviceEntries DeviceEntry[]
+
+  @@index([oemOrgId])
+  @@index([enabled])
 }
 
 model AttestationAuthority {
@@ -182,6 +186,9 @@ model DeviceEntry {
   authority                  AttestationAuthority @relation(fields: [authorityId], references: [id])
   oemOrg                     OemOrg               @relation(fields: [oemOrgId], references: [id])
   deviceFamily               DeviceFamily         @relation(fields: [deviceFamilyId], references: [id])
+
+  @@index([deviceFamilyId, revokedAt])
+  @@index([authorityId])
 }
 
 model AuditLog {
@@ -205,6 +212,8 @@ model BuildPolicy {
   createdAt           DateTime       @default(now())
   deviceFamily        DeviceFamily   @relation(fields: [deviceFamilyId], references: [id])
   reports             DeviceReport[]
+
+  @@index([deviceFamilyId, enabled])
 }
 
 model FederationBackend {

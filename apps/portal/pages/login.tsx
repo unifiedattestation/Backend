@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useRouter } from "next/router";
-import { ArrowRight, KeyRound, Loader2, ShieldCheck, UserRound } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, KeyRound, Loader2, ShieldCheck, Smartphone, UserRound } from "lucide-react";
 import { backendUrl } from "../lib/config";
 
 export default function LoginPage() {
@@ -143,6 +144,14 @@ export default function LoginPage() {
           Default administrator:{" "}
           <span className="font-mono font-medium text-slate-600">admin / admin</span>
         </p>
+
+        <Link
+          href="/devices"
+          className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-slate-500 hover:text-[#071226]"
+        >
+          <Smartphone size={16} />
+          Browse the public device registry
+        </Link>
       </section>
     </main>
   );

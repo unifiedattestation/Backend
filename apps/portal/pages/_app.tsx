@@ -6,6 +6,7 @@ import { useRouter } from "next/router";
 const pageTitles: Record<string, string> = {
   "/": "Unified Attestation",
   "/login": "Sign In",
+  "/devices": "Device Registry",
   "/admin": "Admin Overview",
   "/admin/users": "User Management",
   "/admin/root-anchors": "Root Anchors",
