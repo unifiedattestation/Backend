@@ -27,15 +27,43 @@ describe("evaluateIntegrity", () => {
     expect(verdict).toEqual({ isTrusted: true, reasonCodes: [] });
   });
 
-  it("flags BOOT_STATE_UNVERIFIED when bootloader is unlocked and unverified", () => {
+  it("flags BOOT_STATE_UNVERIFIED when boot state is unverified", () => {
     const verdict = evaluateIntegrity(makeAttestation({ verifiedBootState: "UNVERIFIED" }));
     expect(verdict.isTrusted).toBe(false);
     expect(verdict.reasonCodes).toContain("BOOT_STATE_UNVERIFIED");
   });
 
-  it("does not flag BOOT_STATE_UNVERIFIED when device is not locked", () => {
-    const verdict = evaluateIntegrity(makeAttestation({ verifiedBootState: "UNVERIFIED", deviceLocked: false }));
-    expect(verdict.reasonCodes).not.toContain("BOOT_STATE_UNVERIFIED");
+  it("flags BOOT_STATE_UNVERIFIED when boot state is failed or missing", () => {
+    expect(evaluateIntegrity(makeAttestation({ verifiedBootState: "FAILED" })).reasonCodes).toContain(
+      "BOOT_STATE_UNVERIFIED"
+    );
+    expect(evaluateIntegrity(makeAttestation({ verifiedBootState: undefined })).reasonCodes).toContain(
+      "BOOT_STATE_UNVERIFIED"
+    );
+  });
+
+  it("accepts SELF_SIGNED on a locked device (key is pinned by build policy)", () => {
+    const verdict = evaluateIntegrity(makeAttestation({ verifiedBootState: "SELF_SIGNED" }));
+    expect(verdict).toEqual({ isTrusted: true, reasonCodes: [] });
+  });
+
+  it("flags DEVICE_UNLOCKED and BOOT_STATE_UNVERIFIED for an unlocked, unverified device", () => {
+    const verdict = evaluateIntegrity(
+      makeAttestation({
+        verifiedBootState: "UNVERIFIED",
+        deviceLocked: false,
+        verifiedBootKey: "00".repeat(32)
+      })
+    );
+    expect(verdict.isTrusted).toBe(false);
+    expect(verdict.reasonCodes).toContain("DEVICE_UNLOCKED");
+    expect(verdict.reasonCodes).toContain("BOOT_STATE_UNVERIFIED");
+  });
+
+  it("flags DEVICE_UNLOCKED when lock state is missing", () => {
+    const verdict = evaluateIntegrity(makeAttestation({ deviceLocked: undefined }));
+    expect(verdict.isTrusted).toBe(false);
+    expect(verdict.reasonCodes).toContain("DEVICE_UNLOCKED");
   });
 
   it("flags ATTESTATION_NOT_HARDWARE for a software attestation level", () => {

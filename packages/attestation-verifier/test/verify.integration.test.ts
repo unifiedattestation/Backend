@@ -212,6 +212,20 @@ describe("verifyDeviceAttestation", () => {
     expect(result.verdict.reasonCodes).toContain("BUILD_POLICY_MISMATCH");
   });
 
+  it("fails closed with BUILD_POLICY_MISMATCH when the device has no registered builds", async () => {
+    const { root, attestationChain } = setupChain();
+    mockFetch({ devices: buildDeviceEntry({ builds: [] }), roots: [toPem(root.cert)] });
+
+    const result = await verifyDeviceAttestation({
+      attestationChain,
+      requestHash: CHALLENGE_HEX,
+      registryBaseUrl: BASE_URL,
+      deviceSlug: SLUG
+    });
+    expect(result.verdict.isTrusted).toBe(false);
+    expect(result.verdict.reasonCodes).toContain("BUILD_POLICY_MISMATCH");
+  });
+
   it("throws ANCHOR_MISSING when no root certificates are available", async () => {
     const { attestationChain } = setupChain();
     mockFetch({ devices: buildDeviceEntry(), roots: [] });

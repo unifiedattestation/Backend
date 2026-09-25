@@ -2,13 +2,13 @@ import type { BuildPolicyInput, BuildPolicyMatch, DeviceMeta, ParsedAttestation,
 
 export function evaluateIntegrity(record: ParsedAttestation): Verdict {
   const reasons: string[] = [];
-  if (
-    record.deviceIntegrity.verifiedBootState &&
-    record.deviceIntegrity.verifiedBootState !== "VERIFIED" &&
-    record.deviceIntegrity.deviceLocked === true &&
-    record.deviceIntegrity.verifiedBootKey &&
-    record.deviceIntegrity.verifiedBootHash
-  ) {
+  if (record.deviceIntegrity.deviceLocked !== true) {
+    reasons.push("DEVICE_UNLOCKED");
+  }
+  // SELF_SIGNED (locked bootloader, custom key) is acceptable here: the key is
+  // pinned by the mandatory build-policy match the callers apply afterwards.
+  const bootState = record.deviceIntegrity.verifiedBootState;
+  if (bootState !== "VERIFIED" && bootState !== "SELF_SIGNED") {
     reasons.push("BOOT_STATE_UNVERIFIED");
   }
   if (record.attestationSecurityLevel !== "TEE" && record.attestationSecurityLevel !== "STRONGBOX") {

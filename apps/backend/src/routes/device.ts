@@ -386,17 +386,13 @@ export default async function deviceRoutes(app: FastifyInstance) {
           verdict.reasonCodes.push("BUILD_POLICY_MISMATCH");
           verdict.isTrusted = false;
         }
-      } else if (deviceMeta?.buildFingerprint) {
-        verdict.reasonCodes.push("BUILD_PREFILTER_MISMATCH");
-        verdict.isTrusted = false;
       } else {
-        const buildPolicyTotal = await prisma.buildPolicy.count({
-          where: { deviceFamilyId: anchorEntry.deviceFamilyId }
-        });
-        if (buildPolicyTotal > 0) {
-          verdict.reasonCodes.push("BUILD_POLICY_MISMATCH");
-          verdict.isTrusted = false;
-        }
+        // Fail closed: with no enabled build policy there is nothing to pin the
+        // verifiedBootKey against, so the device can't be vouched for.
+        verdict.reasonCodes.push(
+          deviceMeta?.buildFingerprint ? "BUILD_PREFILTER_MISMATCH" : "BUILD_POLICY_MISMATCH"
+        );
+        verdict.isTrusted = false;
       }
       const now = Math.floor(Date.now() / 1000);
       const exp = now + 60;

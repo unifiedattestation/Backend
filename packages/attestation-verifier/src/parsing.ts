@@ -144,8 +144,17 @@ function parseBoolOrInt(value: Buffer): boolean {
 }
 
 function parseVerifiedBootState(value: Buffer): string {
-  const level = parseDerInteger(value);
-  return level === 0 ? "VERIFIED" : "UNVERIFIED";
+  // RootOfTrust.VerifiedBootState: Verified(0), SelfSigned(1), Unverified(2), Failed(3).
+  switch (parseDerInteger(value)) {
+    case 0:
+      return "VERIFIED";
+    case 1:
+      return "SELF_SIGNED";
+    case 2:
+      return "UNVERIFIED";
+    default:
+      return "FAILED";
+  }
 }
 
 function parseOrigin(value: Buffer): string {

@@ -176,8 +176,12 @@ export async function verifyDeviceAttestation(
       verdict.reasonCodes.push("BUILD_POLICY_MISMATCH");
       verdict.isTrusted = false;
     }
-  } else if (params.deviceMeta?.buildFingerprint) {
-    verdict.reasonCodes.push("BUILD_PREFILTER_MISMATCH");
+  } else {
+    // Fail closed: with no registered build there is nothing to pin the
+    // verifiedBootKey against, so the device can't be vouched for.
+    verdict.reasonCodes.push(
+      params.deviceMeta?.buildFingerprint ? "BUILD_PREFILTER_MISMATCH" : "BUILD_POLICY_MISMATCH"
+    );
     verdict.isTrusted = false;
   }
 
