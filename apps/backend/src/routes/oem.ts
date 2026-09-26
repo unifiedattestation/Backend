@@ -1394,6 +1394,10 @@ export default async function oemRoutes(app: FastifyInstance) {
           rsa: keyTypes.includes("rsa"),
           ecdsa: keyTypes.includes("ec"),
         },
+        rootCounts: {
+          rsa: keyTypes.filter((type) => type === "rsa").length,
+          ecdsa: keyTypes.filter((type) => type === "ec").length,
+        },
       };
     });
     reply.send(response);

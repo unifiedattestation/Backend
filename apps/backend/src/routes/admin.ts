@@ -264,8 +264,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           return "unknown";
         }
       });
-      const hasRsa = keyTypes.includes("rsa");
-      const hasEcdsa = keyTypes.includes("ec");
+      const rsaCount = keyTypes.filter((type) => type === "rsa").length;
+      const ecdsaCount = keyTypes.filter((type) => type === "ec").length;
       return {
         id: authority.id,
         name: authority.name,
@@ -275,8 +275,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         roots: authority.roots,
         statusCachedAt: authority.status?.fetchedAt || null,
         keyAvailability: {
-          rsa: hasRsa,
-          ecdsa: hasEcdsa,
+          rsa: rsaCount > 0,
+          ecdsa: ecdsaCount > 0,
+        },
+        rootCounts: {
+          rsa: rsaCount,
+          ecdsa: ecdsaCount,
         },
       };
     });

@@ -41,7 +41,12 @@ type Authority = {
   createdAt?: string;
   statusCachedAt?: string | null;
   keyAvailability?: { rsa: boolean; ecdsa: boolean };
+  rootCounts?: { rsa: number; ecdsa: number };
 };
+
+// Any number of roots of any key type is fine; an authority needs at least one.
+const hasRoots = (authority: Authority) =>
+  (authority.rootCounts?.rsa ?? 0) + (authority.rootCounts?.ecdsa ?? 0) > 0;
 
 type FederationBackend = {
   id: string;
@@ -370,11 +375,7 @@ export default function AdminOverview() {
   }, [data]);
 
   const allSecure =
-    activeRoots.length > 0 &&
-    activeAuthorities.length > 0 &&
-    activeAuthorities.every(
-      (authority) => authority.keyAvailability?.rsa && authority.keyAvailability?.ecdsa,
-    );
+    activeRoots.length > 0 && activeAuthorities.length > 0 && activeAuthorities.every(hasRoots);
   const federationHealthy =
     data.backends.length > 0 && healthyBackends.length === data.backends.length;
   const unreadNotifications = notifications.filter((notification) => !notification.read).length;
@@ -524,9 +525,7 @@ export default function AdminOverview() {
           >
             <div className="divide-y divide-slate-100 px-5">
               {activeAuthorities.map((authority) => {
-                const healthy =
-                  Boolean(authority.keyAvailability?.rsa) &&
-                  Boolean(authority.keyAvailability?.ecdsa);
+                const healthy = hasRoots(authority);
                 return (
                   <div key={authority.id} className="flex items-center gap-3 py-2.5">
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
@@ -540,7 +539,7 @@ export default function AdminOverview() {
                         {authority.isLocal ? "Local Authority" : authority.baseUrl}
                       </p>
                     </div>
-                    <StatusPill healthy={healthy}>{healthy ? "Healthy" : "Check keys"}</StatusPill>
+                    <StatusPill healthy={healthy}>{healthy ? "Healthy" : "No roots"}</StatusPill>
                   </div>
                 );
               })}

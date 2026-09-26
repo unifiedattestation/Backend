@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   Trash2,
   X,
-  XCircle,
 } from "lucide-react";
 import Footer from "../../components/Footer";
 import { backendUrl } from "../../lib/config";
@@ -32,7 +31,16 @@ type Authority = {
     rsa: boolean;
     ecdsa: boolean;
   };
+  rootCounts?: {
+    rsa: number;
+    ecdsa: number;
+  };
 };
+
+// An authority is usable with any number of roots of any key type
+// (e.g. Huawei's hierarchy is RSA-only); it only needs at least one.
+const rootCount = (authority: Authority) =>
+  (authority.rootCounts?.rsa ?? 0) + (authority.rootCounts?.ecdsa ?? 0);
 
 function StatusBadge({ healthy }: { healthy: boolean }) {
   return (
@@ -48,11 +56,16 @@ function StatusBadge({ healthy }: { healthy: boolean }) {
   );
 }
 
-function AvailabilityIcon({ available }: { available: boolean }) {
-  return available ? (
-    <CheckCircle2 size={19} className="text-emerald-600" />
-  ) : (
-    <XCircle size={19} className="text-red-600" />
+function RootCount({ count }: { count: number }) {
+  return (
+    <span
+      className={[
+        "inline-flex min-w-7 justify-center rounded-md px-2 py-1 text-xs font-semibold",
+        count > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-400",
+      ].join(" ")}
+    >
+      {count}
+    </span>
   );
 }
 
@@ -130,10 +143,7 @@ export default function AdminAuthorities() {
     loadAuthorities();
   }, [loadAuthorities]);
 
-  const isHealthy = (authority: Authority) =>
-    authority.enabled &&
-    Boolean(authority.keyAvailability?.rsa) &&
-    Boolean(authority.keyAvailability?.ecdsa);
+  const isHealthy = (authority: Authority) => authority.enabled && rootCount(authority) > 0;
 
   const filteredAuthorities = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -250,8 +260,14 @@ export default function AdminAuthorities() {
   };
 
   const healthyCount = authorities.filter(isHealthy).length;
-  const rsaCount = authorities.filter((authority) => authority.keyAvailability?.rsa).length;
-  const ecdsaCount = authorities.filter((authority) => authority.keyAvailability?.ecdsa).length;
+  const rsaCount = authorities.reduce(
+    (sum, authority) => sum + (authority.rootCounts?.rsa ?? 0),
+    0,
+  );
+  const ecdsaCount = authorities.reduce(
+    (sum, authority) => sum + (authority.rootCounts?.ecdsa ?? 0),
+    0,
+  );
 
   return (
     <div className="flex min-h-[calc(100vh-3rem)] flex-col gap-5">
@@ -304,13 +320,13 @@ export default function AdminAuthorities() {
           color="bg-emerald-50 text-emerald-700"
         />
         <StatCard
-          label="RSA Available"
+          label="RSA Roots"
           value={rsaCount}
           icon={<KeyRound size={23} />}
           color="bg-sky-50 text-sky-700"
         />
         <StatCard
-          label="ECDSA Available"
+          label="ECDSA Roots"
           value={ecdsaCount}
           icon={<KeyRound size={23} />}
           color="bg-violet-50 text-violet-700"
@@ -337,8 +353,8 @@ export default function AdminAuthorities() {
                 <th className="px-5 py-3 font-semibold">Authority</th>
                 <th className="px-5 py-3 font-semibold">Type</th>
                 <th className="px-5 py-3 font-semibold">Endpoint</th>
-                <th className="px-5 py-3 text-center font-semibold">RSA</th>
-                <th className="px-5 py-3 text-center font-semibold">ECDSA</th>
+                <th className="px-5 py-3 text-center font-semibold">RSA Roots</th>
+                <th className="px-5 py-3 text-center font-semibold">ECDSA Roots</th>
                 <th className="px-5 py-3 font-semibold">Last Checked</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
                 <th className="px-5 py-3 text-right font-semibold">Actions</th>
@@ -384,12 +400,12 @@ export default function AdminAuthorities() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex justify-center">
-                      <AvailabilityIcon available={Boolean(authority.keyAvailability?.rsa)} />
+                      <RootCount count={authority.rootCounts?.rsa ?? 0} />
                     </div>
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex justify-center">
-                      <AvailabilityIcon available={Boolean(authority.keyAvailability?.ecdsa)} />
+                      <RootCount count={authority.rootCounts?.ecdsa ?? 0} />
                     </div>
                   </td>
                   <td className="px-5 py-3 text-xs text-slate-500">
@@ -517,7 +533,7 @@ export default function AdminAuthorities() {
                 <th className="px-5 py-3 font-semibold">Authority</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
                 <th className="px-5 py-3 font-semibold">Last Refresh</th>
-                <th className="px-5 py-3 font-semibold">Keys</th>
+                <th className="px-5 py-3 font-semibold">Roots</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -536,8 +552,7 @@ export default function AdminAuthorities() {
                       : "Never"}
                   </td>
                   <td className="px-5 py-3 text-xs text-slate-600">
-                    RSA {authority.keyAvailability?.rsa ? "✓" : "✕"} · ECDSA{" "}
-                    {authority.keyAvailability?.ecdsa ? "✓" : "✕"}
+                    {authority.rootCounts?.rsa ?? 0} RSA · {authority.rootCounts?.ecdsa ?? 0} ECDSA
                   </td>
                 </tr>
               ))}
