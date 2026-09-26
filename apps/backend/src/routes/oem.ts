@@ -414,23 +414,20 @@ async function processDeviceImport(
     );
   }
 
-  const certSubjectSerial = (pem: string): string | null => {
+  // Match roots by public key (SPKI DER), the same comparison /device/process
+  // uses to select a root. Subject attributes are vendor naming conventions
+  // (Google roots carry serialNumber=, Huawei's don't) and prove nothing.
+  const certSpki = (pem: string): Buffer | null => {
     try {
-      const subject = new crypto.X509Certificate(pem).subject;
-      const match = subject.match(/serialNumber=([^\n,/]+)/i);
-      return match ? match[1].trim().toLowerCase() : null;
+      return new crypto.X509Certificate(pem).publicKey.export({ type: "spki", format: "der" }) as Buffer;
     } catch {
       return null;
     }
   };
 
-  const ecRootSubjectSerial = certSubjectSerial(ecRootPem);
-  if (!ecRootSubjectSerial)
-    throw new HttpError(
-      400,
-      "INVALID_REQUEST",
-      "Cannot parse EC root certificate or extract subject serialNumber",
-    );
+  const ecRootSpki = certSpki(ecRootPem);
+  if (!ecRootSpki)
+    throw new HttpError(400, "INVALID_REQUEST", "Cannot parse EC root certificate");
 
   const allRegisteredRoots = await prisma.attestationRoot.findMany({
     include: { authority: true },
@@ -439,8 +436,8 @@ async function processDeviceImport(
 
   let matchedAuthority: (typeof allRegisteredRoots)[0]["authority"] | null = null;
   for (const r of enabledRoots) {
-    const serial = certSubjectSerial(r.pem);
-    if (serial !== null && serial === ecRootSubjectSerial) {
+    const spki = certSpki(r.pem);
+    if (spki !== null && spki.equals(ecRootSpki)) {
       matchedAuthority = r.authority;
       break;
     }
