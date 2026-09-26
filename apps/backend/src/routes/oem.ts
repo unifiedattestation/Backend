@@ -1467,13 +1467,16 @@ export default async function oemRoutes(app: FastifyInstance) {
       return;
     }
     const activeAnchors = await prisma.deviceEntry.count({
-      where: { oemOrgId: org.id, revokedAt: null },
+      where: { oemOrgId: org.id, deviceFamilyId: deviceFamily.id, revokedAt: null },
     });
     if (activeAnchors > 0) {
       reply
         .code(400)
         .send(
-          errorResponse("INVALID_REQUEST", "Revoke existing anchor before registering a new one"),
+          errorResponse(
+            "INVALID_REQUEST",
+            "Revoke this device's existing anchor before registering a new one",
+          ),
         );
       return;
     }
@@ -1584,13 +1587,16 @@ export default async function oemRoutes(app: FastifyInstance) {
       return;
     }
     const activeAnchors = await prisma.deviceEntry.count({
-      where: { oemOrgId: org.id, revokedAt: null },
+      where: { oemOrgId: org.id, deviceFamilyId: deviceFamily.id, revokedAt: null },
     });
     if (activeAnchors > 0) {
       reply
         .code(400)
         .send(
-          errorResponse("INVALID_REQUEST", "Revoke existing anchor before generating a new one"),
+          errorResponse(
+            "INVALID_REQUEST",
+            "Revoke this device's existing anchor before generating a new one",
+          ),
         );
       return;
     }
