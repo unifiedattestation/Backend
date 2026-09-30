@@ -11,7 +11,8 @@ function makeCert(attrs: forge.pki.CertificateField[], issuer?: { cert: forge.pk
   const keys = forge.pki.rsa.generateKeyPair(1024);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = "0" + forge.util.bytesToHex(forge.random.getBytesSync(8));
+  // Even-length hex with a leading 01 byte: always a positive DER INTEGER.
+  cert.serialNumber = "01" + forge.util.bytesToHex(forge.random.getBytesSync(8));
   cert.validity.notBefore = new Date(Date.now() - 60 * 60 * 1000);
   cert.validity.notAfter = new Date(Date.now() + 60 * 60 * 1000);
   cert.setSubject(attrs);
