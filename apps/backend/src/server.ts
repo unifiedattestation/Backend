@@ -64,6 +64,12 @@ export function buildServer() {
   });
 
   app.decorate("config", config);
+  if (config.poc.allowMissingRootOfTrust) {
+    app.log.warn(
+      "PoC mode: attestations without a RootOfTrust are accepted with an untrusted " +
+        "ROOT_OF_TRUST_MISSING verdict. Never enable this on a production backend."
+    );
+  }
   app.decorate("authRateLimiter", new RateLimiter(20, 60));
   app.decorate("publicRateLimiter", new RateLimiter(120, 60));
 

@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import forge from "node-forge";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import deviceRoutes from "../src/routes/device";
 
 // device.ts's own root-selection code (routes/device.ts) constructs real
@@ -91,7 +91,7 @@ vi.mock("../src/services/attestationAuthorities", () => ({
   getAuthorityStatus: vi.fn(() => Promise.resolve({ revokedSerials: [], suspendedSerials: [] }))
 }));
 
-function buildApp() {
+function buildApp(options: { allowMissingRootOfTrust?: boolean } = {}) {
   const app = Fastify();
   app.decorate("config", {
     backendId: "backend",
@@ -105,7 +105,8 @@ function buildApp() {
     security: {
       apiSecretHeader: "x-ua-api-secret",
       jwt: { accessTtlMinutes: 15, refreshTtlDays: 30 }
-    }
+    },
+    poc: { allowMissingRootOfTrust: options.allowMissingRootOfTrust ?? false }
   });
   app.register(deviceRoutes, { prefix: "/api/v1/device" });
   return app;
@@ -154,5 +155,71 @@ describe("/api/v1/device/process", () => {
     expect(body.code).toBe("APP_ID_MISMATCH");
 
     mockAttestation.app.packageName = "com.example.app";
+  });
+});
+
+// Huawei EMUI-style attestation: TEE-backed key and app identity, but the
+// KeyMint record carries no RootOfTrust (no boot key, lock or boot state).
+describe("/api/v1/device/process without RootOfTrust", () => {
+  const withRootOfTrust = mockAttestation.deviceIntegrity;
+
+  function processWithoutRootOfTrust(options: { allowMissingRootOfTrust?: boolean }) {
+    mockPrisma.app.findUnique.mockResolvedValue(null);
+    mockPrisma.deviceReport.upsert.mockResolvedValue({});
+    mockAttestation.deviceIntegrity = { osPatchLevel: 202506 } as typeof withRootOfTrust;
+    return buildApp(options).inject({
+      method: "POST",
+      url: "/api/v1/device/process",
+      payload: {
+        projectId: "com.example.app",
+        requestHash: "abc",
+        attestationChain: ["dummy"],
+        deviceMeta: {}
+      }
+    });
+  }
+
+  afterEach(() => {
+    mockAttestation.deviceIntegrity = withRootOfTrust;
+  });
+
+  it("rejects by default", async () => {
+    const response = await processWithoutRootOfTrust({});
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_ATTESTATION",
+      message: "Missing root of trust"
+    });
+  });
+
+  it("issues an untrusted ROOT_OF_TRUST_MISSING verdict in PoC mode", async () => {
+    const response = await processWithoutRootOfTrust({ allowMissingRootOfTrust: true });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(typeof body.token).toBe("string");
+    expect(body.verdict).toEqual({
+      isTrusted: false,
+      reasonCodes: ["ROOT_OF_TRUST_MISSING", "BUILD_POLICY_UNVERIFIED"]
+    });
+  });
+
+  it("leaves attestations that do have a RootOfTrust unchanged in PoC mode", async () => {
+    mockPrisma.app.findUnique.mockResolvedValue(null);
+    mockPrisma.deviceReport.upsert.mockResolvedValue({});
+    const response = await buildApp({ allowMissingRootOfTrust: true }).inject({
+      method: "POST",
+      url: "/api/v1/device/process",
+      payload: {
+        projectId: "com.example.app",
+        requestHash: "abc",
+        attestationChain: ["dummy"],
+        deviceMeta: {}
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().verdict.reasonCodes).not.toContain("ROOT_OF_TRUST_MISSING");
   });
 });

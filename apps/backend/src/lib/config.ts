@@ -22,6 +22,12 @@ export type Config = {
       refreshTtlDays: number;
     };
   };
+  poc: {
+    // PoC/test backends only: accept attestations without a RootOfTrust
+    // (e.g. Huawei EMUI) instead of rejecting them. Such verdicts are never
+    // trusted. Never enable on a production backend.
+    allowMissingRootOfTrust: boolean;
+  };
 };
 
 const DEFAULT_CONFIG_PATHS = [
@@ -77,6 +83,12 @@ export function loadConfig(): Config {
           process.env.UA_JWT_REFRESH_TTL || loaded.security.jwt.refreshTtlDays
         )
       }
+    },
+    poc: {
+      allowMissingRootOfTrust:
+        process.env.UA_POC_ALLOW_MISSING_ROOT_OF_TRUST !== undefined
+          ? process.env.UA_POC_ALLOW_MISSING_ROOT_OF_TRUST === "true"
+          : loaded.poc?.allowMissingRootOfTrust === true
     }
   };
 

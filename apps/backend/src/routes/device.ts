@@ -328,9 +328,17 @@ export default async function deviceRoutes(app: FastifyInstance) {
           .send(errorResponse("INVALID_ATTESTATION", "Security level mismatch"));
         return;
       }
-      if (!attestation.deviceIntegrity.verifiedBootKey || !attestation.deviceIntegrity.verifiedBootState) {
-        reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Missing root of trust"));
-        return;
+      const rootOfTrustMissing =
+        !attestation.deviceIntegrity.verifiedBootKey || !attestation.deviceIntegrity.verifiedBootState;
+      if (rootOfTrustMissing) {
+        if (!app.config.poc?.allowMissingRootOfTrust) {
+          reply.code(400).send(errorResponse("INVALID_ATTESTATION", "Missing root of trust"));
+          return;
+        }
+        request.log.warn(
+          { leafSerial, deviceFamilyId: anchorEntry.deviceFamilyId },
+          "device.process PoC mode: accepting attestation without root of trust (untrusted verdict)"
+        );
       }
       if (attestation.attestationChallengeHex !== body.requestHash.toLowerCase()) {
         request.log.warn(
@@ -380,7 +388,23 @@ export default async function deviceRoutes(app: FastifyInstance) {
         where: { enabled: true, deviceFamilyId: anchorEntry.deviceFamilyId },
         orderBy: { createdAt: "desc" }
       });
-      if (buildPolicies.length > 0) {
+      if (rootOfTrustMissing) {
+        // PoC mode only (rejected above otherwise). Absent lock/boot fields are
+        // unknown rather than known-bad, and with no verifiedBootKey there is
+        // nothing to pin a build policy against -- so the verdict says exactly
+        // that and can never be trusted.
+        const integrity = attestation.deviceIntegrity;
+        const unknownCodes = [
+          ...(integrity.deviceLocked === undefined ? ["DEVICE_UNLOCKED"] : []),
+          ...(integrity.verifiedBootState === undefined ? ["BOOT_STATE_UNVERIFIED"] : [])
+        ];
+        verdict.reasonCodes = [
+          "ROOT_OF_TRUST_MISSING",
+          ...verdict.reasonCodes.filter((code) => !unknownCodes.includes(code)),
+          "BUILD_POLICY_UNVERIFIED"
+        ];
+        verdict.isTrusted = false;
+      } else if (buildPolicies.length > 0) {
         match = matchBuildPolicy(buildPolicies, attestation, deviceMeta);
         if (!match.buildPolicyId) {
           verdict.reasonCodes.push("BUILD_POLICY_MISMATCH");
