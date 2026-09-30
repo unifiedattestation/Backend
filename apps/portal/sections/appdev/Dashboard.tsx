@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import AppdevFooter from "../../components/appdev/Footer";
 import { backendUrl } from "../../lib/config";
+import { isValidSignerDigest } from "../../lib/signerDigest";
 
 type DeveloperApp = {
   id: string;
@@ -150,8 +151,8 @@ export default function AppdevDashboard({
   }, [reports, search]);
 
   const registerApp = async () => {
-    if (!appName.trim() || !projectId.trim() || !/^[a-fA-F0-9]{64}$/.test(signerDigest.trim())) {
-      setError("Enter an app name, project ID, and a valid 64-character SHA-256 digest.");
+    if (!appName.trim() || !projectId.trim() || !isValidSignerDigest(signerDigest)) {
+      setError("Enter an app name, project ID, and a valid SHA-256 hex digest.");
       return;
     }
     const token = localStorage.getItem("ua_access");
@@ -829,7 +830,7 @@ function ConfigurationStatus({
     ["Application registered", apps.length > 0, apps.length ? "Complete" : "Required"],
     [
       "Signing digest configured",
-      apps.some((app) => app.signerDigestSha256.length === 64),
+      apps.some((app) => isValidSignerDigest(app.signerDigestSha256)),
       apps.length ? "Complete" : "Required",
     ],
     ["Server secret configured", apps.length > 0, apps.length ? "Complete" : "Required"],
@@ -922,7 +923,7 @@ function GettingStarted({
 }) {
   const steps = [
     ["Register application", apps.length > 0],
-    ["Configure signing digest", apps.some((app) => app.signerDigestSha256.length === 64)],
+    ["Configure signing digest", apps.some((app) => isValidSignerDigest(app.signerDigestSha256))],
     ["Configure app server", backends.some((backend) => backend.status === "active")],
     ["Receive first device report", reports.length > 0],
   ] as const;

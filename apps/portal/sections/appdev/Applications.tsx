@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import AppdevFooter from "../../components/appdev/Footer";
 import { backendUrl } from "../../lib/config";
+import { isValidSignerDigest } from "../../lib/signerDigest";
 
 type DeveloperApp = {
   id: string;
@@ -171,8 +172,8 @@ export default function AppdevApplications({
   useEffect(() => setPage(1), [search, statusFilter]);
 
   const registerApp = async () => {
-    if (!appName.trim() || !projectId.trim() || !/^[a-fA-F0-9]{64}$/.test(signerDigest.trim())) {
-      setError("Enter an app name, unique project ID, and a valid 64-character SHA-256 digest.");
+    if (!appName.trim() || !projectId.trim() || !isValidSignerDigest(signerDigest)) {
+      setError("Enter an app name, unique project ID, and a valid SHA-256 hex digest.");
       return;
     }
     const token = localStorage.getItem("ua_access");
@@ -543,14 +544,14 @@ export default function AppdevApplications({
                   label="Signing Cert SHA-256 (hex)"
                   value={signerDigest}
                   onChange={setSignerDigest}
-                  placeholder="Enter 64-character hexadecimal digest"
+                  placeholder="64-character hexadecimal digest"
                 />
                 <ValidationChecklist
                   unique={
                     !apps.some((app) => app.projectId === projectId.trim()) &&
                     Boolean(projectId.trim())
                   }
-                  validDigest={/^[a-fA-F0-9]{64}$/.test(signerDigest.trim())}
+                  validDigest={isValidSignerDigest(signerDigest)}
                 />
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-700">
                   The application can be edited after registration.
